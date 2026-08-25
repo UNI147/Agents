@@ -21,8 +21,7 @@ echo [OK] Python:
 python --version
 echo.
 
-pip install pytest pytest-cov
-pip install numpy matplotlib
+pip install networkx
 
 :: Экспорт актуального списка всех зависимостей в requirements.txt
 echo [INFO] Обновление requirements.txt...
