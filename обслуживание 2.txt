@@ -1,0 +1,586 @@
+## 1. Как использовать
+
+Первый раз в папке проекта:
+
+```bash
+cd /path/to/project
+
+./01-setup-repo.sh git@github.com:your-login/your-repo.git
+```
+
+Дальше после изменений:
+
+```bash
+./02-push-updates.sh "Add new feature"
+```
+
+Или просто:
+
+```bash
+./02-push-updates.sh
+```
+
+Тогда сообщение будет автоматическим, например:
+
+```text
+Update 2026-08-25 15:30:00
+```
+
+---
+
+## 2. Что можно менять в этих скриптах
+
+Обычно нужно менять минимум:
+
+### В `01-setup-repo.sh`
+
+Либо передавать адрес как аргумент:
+
+```bash
+./01-setup-repo.sh git@github.com:your-login/your-repo.git
+```
+
+Либо один раз вписать его в скрипт:
+
+```bash
+REMOTE_URL="${1:-git@github.com:your-login/your-repo.git}"
+```
+
+Также можно поменять:
+
+```bash
+BRANCH="main"
+INITIAL_MESSAGE="Initial commit"
+GIT_USER_NAME="Your Name"
+GIT_USER_EMAIL="you@example.com"
+```
+
+### В `02-push-updates.sh`
+
+Обычно менять ничего не нужно.  
+При желании можно задать ветку:
+
+```bash
+BRANCH=main ./02-push-updates.sh
+```
+
+Или использовать другую ветку:
+
+```bash
+BRANCH=develop ./02-push-updates.sh "Update develop"
+```
+
+---
+
+## 3. Если хотите использовать эти скрипты для разных проектов
+
+Положите их в `~/bin`:
+
+```bash
+mkdir -p ~/bin
+cp 01-setup-repo.sh 02-push-updates.sh ~/bin/
+chmod +x ~/bin/*.sh
+```
+
+Добавьте `~/bin` в `PATH`, если его там нет:
+
+```bash
+echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Тогда можно из любой папки проекта делать:
+
+```bash
+01-setup-repo.sh git@github.com:your-login/your-repo.git
+02-push-updates.sh "Some message"
+```
+
+---
+
+## 4. Очень важный момент про `.gitignore`
+
+Скрипт автоматически создаёт базовый `.gitignore`, если репозиторий ещё пустой:
+
+```gitignore
+# Секреты и локальные настройки
+.env
+.env.*
+*.pem
+*.key
+credentials*
+
+# ОС
+.DS_Store
+Thumbs.db
+
+# Редакторы
+.idea/
+.vscode/
+```
+
+Перед первым коммитом проверьте, не попадает ли в репозиторий что-то лишнее:
+
+```bash
+git status
+```
+
+Если нужно что-то игнорировать, добавьте это в `.gitignore`.
+
+---
+
+## 5. Если нужен Windows PowerShell
+
+Если вы не хотите использовать Git Bash, можно использовать PowerShell.
+
+Для PowerShell может понадобиться разрешить локальные скрипты:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Или запускать так:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\01-setup-repo.ps1
+```
+
+---
+
+### `01-setup-repo.ps1`
+
+```powershell
+# 01-setup-repo.ps1
+# Создание/проверка локального репозитория и первичная отправка в GitHub.
+#
+# Использование:
+#   .\01-setup-repo.ps1 -RemoteUrl git@github.com:USER/REPO.git
+
+param(
+    [string]$RemoteUrl = "git@github.com:USER/REPO.git",
+    [string]$Branch = "main",
+    [string]$InitialMessage = "Initial commit",
+    [string]$GitUserName = "Your Name",
+    [string]$GitUserEmail = "you@example.com"
+)
+
+function Write-Log([string]$msg) {
+    Write-Host "[setup] $msg"
+}
+
+function Exit-Error([string]$msg) {
+    Write-Host "[setup][error] $msg" -ForegroundColor Red
+    exit 1
+}
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Exit-Error "git не установлен."
+}
+
+if ($RemoteUrl -match "USER/REPO\.git") {
+    Exit-Error "Укажите реальный RemoteUrl, например: .\01-setup-repo.ps1 -RemoteUrl git@github.com:login/project.git"
+}
+
+# Не разрешаем случайно инициализировать репозиторий прямо в домашней папке.
+if ((Get-Location).Path -eq $HOME) {
+    git rev-parse --is-inside-work-tree 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Exit-Error "Отказ: домашний каталог. Перейдите в папку проекта."
+    }
+}
+
+# Инициализация репозитория.
+git rev-parse --is-inside-work-tree 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Log "Создаю git-репозиторий..."
+
+    git init -b $Branch 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        git init | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Exit-Error "git init failed"
+        }
+
+        git symbolic-ref HEAD "refs/heads/$Branch" | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Exit-Error "Не удалось задать ветку"
+        }
+    }
+} else {
+    Write-Log "Git-репозиторий уже инициализирован."
+}
+
+# Имя и email для коммитов.
+$name = git config user.name 2>$null
+if ([string]::IsNullOrWhiteSpace($name)) {
+    git config user.name $GitUserName | Out-Null
+}
+
+$email = git config user.email 2>$null
+if ([string]::IsNullOrWhiteSpace($email)) {
+    git config user.email $GitUserEmail | Out-Null
+}
+
+# Remote origin.
+$remote = git remote get-url origin 2>$null
+if ($LASTEXITCODE -ne 0) {
+    git remote add origin $RemoteUrl | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Exit-Error "Не удалось добавить remote"
+    }
+
+    Write-Log "Добавлен origin: $RemoteUrl"
+} else {
+    Write-Log "origin уже задан: $remote"
+
+    if ($remote -ne $RemoteUrl) {
+        Write-Log "Если нужно изменить: git remote set-url origin $RemoteUrl"
+    }
+}
+
+# Первый коммит только если коммитов ещё нет.
+git rev-parse --verify HEAD 2>$null | Out-Null
+$hasHead = ($LASTEXITCODE -eq 0)
+
+if (-not $hasHead) {
+    if (-not (Test-Path .gitignore)) {
+@"
+# Секреты и локальные настройки
+.env
+.env.*
+*.pem
+*.key
+credentials*
+
+# ОС
+.DS_Store
+Thumbs.db
+
+# Редакторы
+.idea/
+.vscode/
+"@ | Set-Content -Encoding UTF8 .gitignore
+
+        Write-Log "Создан .gitignore"
+    }
+
+    git add -A | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Exit-Error "git add failed"
+    }
+
+    git diff --cached --quiet
+    $noStaged = ($LASTEXITCODE -eq 0)
+
+    if ($noStaged) {
+        git commit --allow-empty -m $InitialMessage | Out-Null
+    } else {
+        git commit -m $InitialMessage | Out-Null
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        Exit-Error "Не удалось сделать коммит"
+    }
+
+    Write-Log "Создан первоначальный коммит."
+} else {
+    Write-Log "Коммиты уже есть. Этот скрипт только проверяет remote и делает push."
+}
+
+# Push.
+git push -u origin $Branch
+if ($LASTEXITCODE -ne 0) {
+    Exit-Error "Push не удался. Проверьте, что репозиторий на GitHub создан и адрес правильный."
+}
+
+Write-Log "Готово."
+```
+
+---
+
+### `02-push-updates.ps1`
+
+```powershell
+# 02-push-updates.ps1
+# Добавить изменения, создать коммит, подтянуть изменения с GitHub и отправить коммиты.
+#
+# Использование:
+#   .\02-push-updates.ps1
+#   .\02-push-updates.ps1 -Message "Add feature X"
+
+param(
+    [string]$Message = "",
+    [string]$Branch = ""
+)
+
+function Write-Log([string]$msg) {
+    Write-Host "[push] $msg"
+}
+
+function Exit-Error([string]$msg) {
+    Write-Host "[push][error] $msg" -ForegroundColor Red
+    exit 1
+}
+
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    Exit-Error "git не установлен."
+}
+
+git rev-parse --is-inside-work-tree 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Exit-Error "Не найден git-репозиторий. Сначала запустите 01-setup-repo.ps1."
+}
+
+if ([string]::IsNullOrWhiteSpace($Branch)) {
+    $Branch = git symbolic-ref --short HEAD 2>$null
+
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($Branch)) {
+        Exit-Error "Не удалось определить ветку. Возможно, вы в состоянии detached HEAD."
+    }
+}
+
+$rebaseMerge = git rev-parse --git-path rebase-merge 2>$null
+$rebaseApply = git rev-parse --git-path rebase-apply 2>$null
+
+if ((Test-Path $rebaseMerge) -or (Test-Path $rebaseApply)) {
+    Exit-Error "Идёт rebase. Завершите его: git rebase --continue или отмените: git rebase --abort."
+}
+
+$name = git config user.name 2>$null
+$email = git config user.email 2>$null
+
+if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($email)) {
+    Exit-Error "Не заданы git user.name/user.email."
+}
+
+if ([string]::IsNullOrWhiteSpace($Message)) {
+    $Message = "Update " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
+}
+
+git add -A | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Exit-Error "git add failed"
+}
+
+git diff --cached --quiet
+if ($LASTEXITCODE -eq 0) {
+    Write-Log "Нет изменений для нового коммита."
+} else {
+    git commit -m $Message | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Exit-Error "Не удалось сделать коммит"
+    }
+}
+
+git rev-parse --verify HEAD 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Exit-Error "Нет ни одного коммита. Запустите 01-setup-repo.ps1 или сделайте коммит вручную."
+}
+
+git remote get-url origin 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Exit-Error "Не настроен origin. Добавьте: git remote add origin <URL>"
+}
+
+git ls-remote --exit-code --heads origin $Branch 2>$null | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Log "Подтягиваю изменения из origin/$Branch..."
+
+    git pull --rebase --autostash origin $Branch
+    if ($LASTEXITCODE -ne 0) {
+        Exit-Error "Конфликт при rebase. Исправьте файлы, затем: git add . && git rebase --continue; отмена: git rebase --abort. После завершения выполните: git push -u origin $Branch"
+    }
+}
+
+git push -u origin $Branch
+if ($LASTEXITCODE -ne 0) {
+    Exit-Error "Push не удался. Проверьте доступ к GitHub, адрес remote и состояние ветки."
+}
+
+Write-Log "Готово. Коммиты отправлены в GitHub."
+```
+
+---
+
+## 6. Как быть с авторизацией на GitHub
+
+### SSH
+
+Если используете адрес вида:
+
+```text
+git@github.com:USER/REPO.git
+```
+
+нужен SSH-ключ.
+
+Проверка:
+
+```bash
+ssh -T git@github.com
+```
+
+Если ключа нет:
+
+```bash
+ssh-keygen -t ed25519 -C "you@example.com"
+```
+
+Публичный ключ обычно здесь:
+
+```bash
+cat ~/.ssh/id_ed25519.pub
+```
+
+Добавьте его в GitHub:  
+**Settings → SSH and GPG keys → New SSH key**.
+
+---
+
+### HTTPS
+
+Если используете:
+
+```text
+https://github.com/USER/REPO.git
+```
+
+Git спросит логин и пароль или токен.
+
+Пароль от аккаунта обычно не подходит. Нужен:
+
+- Personal Access Token;
+- или авторизация через `gh auth login`;
+- или сохранённые данные в Git Credential Manager.
+
+---
+
+## 7. Если хотите автоматически запускать пуш по расписанию
+
+Только если уверены, что в папке не будет неожиданных конфликтов.
+
+Пример для `cron`:
+
+```cron
+*/30 * * * * cd /home/user/project && /home/user/bin/02-push-updates.sh >> /home/user/git-auto-push.log 2>&1
+```
+
+Это будет запускать скрипт каждые 30 минут.
+
+Лучше писать лог не внутри репозитория, чтобы лог сам не попадал в коммиты.
+
+---
+
+## 8. Частые проблемы
+
+### `remote: Repository not found`
+
+Неверный адрес репозитория или нет прав доступа.
+
+Проверить:
+
+```bash
+git remote -v
+```
+
+Исправить:
+
+```bash
+git remote set-url origin git@github.com:USER/REPO.git
+```
+
+---
+
+### `Updates were rejected`
+
+На сервере есть коммиты, которых нет локально.
+
+Обычно:
+
+```bash
+git pull --rebase origin main
+git push origin main
+```
+
+Если репозитории были созданы независимо и истории не связаны:
+
+```bash
+git pull origin main --allow-unrelated-histories
+```
+
+---
+
+### `src refspec main does not match any`
+
+Обычно значит, что ещё нет ни одного коммита.
+
+Сделайте:
+
+```bash
+git add -A
+git commit -m "Initial commit"
+git push -u origin main
+```
+
+---
+
+### `fatal: not a git repository`
+
+Вы не в папке git-репозитория.
+
+Запустите setup-скрипт:
+
+```bash
+./01-setup-repo.sh git@github.com:USER/REPO.git
+```
+
+---
+
+### При `pull --rebase` возник конфликт
+
+Скрипт остановится. Нужно вручную:
+
+```bash
+git status
+```
+
+Исправить конфликтующие файлы, затем:
+
+```bash
+git add .
+git rebase --continue
+```
+
+Если хотите отменить:
+
+```bash
+git rebase --abort
+```
+
+После успешного завершения:
+
+```bash
+git push -u origin main
+```
+
+---
+
+## 9. Минимальный рабочий сценарий
+
+Коротко:
+
+```bash
+cd my-project
+
+./01-setup-repo.sh git@github.com:your-login/my-project.git
+
+# что-то изменили в файлах
+
+./02-push-updates.sh "First working version"
+
+# снова изменили
+
+./02-push-updates.sh "Fix bug"
+```
+
+Этого достаточно для простого и предсказуемого локального репозитория с автоматическим отправлением коммитов на GitHub.

@@ -1,0 +1,14 @@
+# Секреты и локальные настройки
+.env
+.env.*
+*.pem
+*.key
+credentials*
+
+# ОС
+.DS_Store
+Thumbs.db
+
+# Редакторы
+.idea/
+.vscode/
