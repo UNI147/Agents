@@ -2,7 +2,6 @@ from mesa import Agent
 from dataclasses import dataclass, replace
 import numpy as np
 
-
 @dataclass
 class Genome:
     vision: int
@@ -19,25 +18,56 @@ class Genome:
                 np.clip(g.metabolism + rng.uniform(-0.5, 0.5), min_metabolism, max_metabolism)
             )
         if rng.random() < rate:
-            g.strategy = "C" if g.strategy == "D" else "D"
+            # Расширенный набор стратегий (Пункт 1.1)
+            strategies = ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]
+            g.strategy = rng.choice(strategies)
         if rng.random() < rate:
             g.max_age = int(max(50, g.max_age + rng.integers(-20, 21)))
         return g
 
-
 class EcoAgent(Agent):
     """Агент без собственного метода step(). Логика вынесена в Model для синхронности."""
-
+    
     def __init__(self, model, genome):
         super().__init__(model)
         self.genome = genome
-        # Ресурс теперь задаётся явно при создании (родителем или моделью)
         self.resource = 0.0
         self.age = 0
+        
+        # Память для условных стратегий (Реализация базы для Пункта 1.2)
+        self.last_action = "C"
+        self.last_payoff = 0.0
+        self.last_cell_coop_rate = 1.0  # Изначально предполагаем, что окружение кооперативно
 
     @property
     def alive(self):
         return self.resource > 0 and self.age < self.genome.max_age
+
+    def get_action(self):
+        """Определяет действие агента на основе его стратегии и памяти."""
+        strat = self.genome.strategy
+        if strat in ("C", "AlwaysC"):
+            return "C"
+        elif strat in ("D", "AlwaysD"):
+            return "D"
+        elif strat == "TFT":
+            # Tit-for-Tat: копирует поведение большинства соседей в прошлый раз
+            return "C" if self.last_cell_coop_rate >= 0.5 else "D"
+        elif strat == "GTFT":
+            # Generous Tit-for-Tat: прощает дефекцию с вероятностью ~33%
+            if self.last_cell_coop_rate >= 0.5:
+                return "C"
+            else:
+                return "C" if self.model.rng.random() < 0.33 else "D"
+        elif strat == "WSLS":
+            # Win-Stay, Lose-Shift (Pavlov)
+            # "Выигрыш" если выигрыш строго больше, чем при взаимной дефекции (P)
+            P = self.model.cfg.game.P
+            if self.last_payoff > P + 1e-6:
+                return self.last_action
+            else:
+                return "D" if self.last_action == "C" else "C"
+        return "C"
 
     def perceive_and_move(self):
         """Выбирает лучшую клетку в радиусе зрения."""
@@ -47,16 +77,14 @@ class EcoAgent(Agent):
         
         best_x, best_y = x, y
         best_val = env_resource[y, x]
-
-        # Используем кэш модели для ускорения
-        neighbors = self.model.get_neighborhood_cached(self.pos, vision)
         
+        neighbors = self.model.get_neighborhood_cached(self.pos, vision)
         for nx, ny in neighbors:
             val = env_resource[ny, nx]
             if val > best_val:
                 best_val = val
                 best_x, best_y = nx, ny
-
+                
         if (best_x, best_y) != self.pos:
             self.model.grid.move_agent(self, (best_x, best_y))
 
@@ -64,8 +92,6 @@ class EcoAgent(Agent):
         self.resource -= self.genome.metabolism
 
     def can_reproduce(self):
-        # Нужно иметь достаточно ресурса, чтобы поделиться им с потомком
-        # Минимум: reproduction_threshold + способность отдать половину
         threshold = self.model.cfg.reproduction_threshold
         return self.alive and self.resource > threshold
 
@@ -81,11 +107,9 @@ class EcoAgent(Agent):
             rng,
         )
         
-        # Делим ресурс родителя пополам
         child_resource = self.resource / 2.0
         self.resource = child_resource
-
+        
         child = EcoAgent(self.model, genome=child_genome)
         child.resource = child_resource
-        
         return child

@@ -2,53 +2,77 @@ from mesa import Model
 from mesa.space import MultiGrid
 from mesa.datacollection import DataCollector
 import numpy as np
+
 from .agent import EcoAgent, Genome
 from .environment import DynamicEnvironment
-
 
 def compute_stats(model):
     """Единый проход по агентам для сбора всей статистики."""
     n = len(model.agents)
     if n == 0:
         return {
-            "Population": 0, "Freq_Cooperators": 0.0,
-            "Avg_Agent_Resource": 0.0, "Avg_Vision": 0.0, "Avg_Metabolism": 0.0
+            "Population": 0, "Freq_Cooperators": 0.0, "Freq_Action_C": 0.0,
+            "Avg_Agent_Resource": 0.0, "Avg_Vision": 0.0, "Avg_Metabolism": 0.0,
+            "Freq_AlwaysC": 0.0, "Freq_AlwaysD": 0.0, "Freq_TFT": 0.0, 
+            "Freq_WSLS": 0.0, "Freq_GTFT": 0.0
         }
     
-    sum_res = sum_vis = sum_met = n_c = 0
+    sum_res = sum_vis = sum_met = n_c = n_action_c = 0
+    n_always_c = n_always_d = n_tft = n_wsls = n_gtft = 0
+    
     for a in model.agents:
         sum_res += a.resource
         sum_vis += a.genome.vision
         sum_met += a.genome.metabolism
-        if a.genome.strategy == "C":
+        
+        strat = a.genome.strategy
+        if strat in ("C", "AlwaysC"):
+            n_always_c += 1
+            n_c += 1
+        elif strat in ("D", "AlwaysD"):
+            n_always_d += 1
+        elif strat == "TFT":
+            n_tft += 1
+            n_c += 1 # Условные кооператоры тоже считаются в общий пул "склонных к кооперации"
+        elif strat == "WSLS":
+            n_wsls += 1
+        elif strat == "GTFT":
+            n_gtft += 1
             n_c += 1
             
+        if getattr(a, "last_action", "C") == "C":
+            n_action_c += 1
+
     return {
         "Population": n,
         "Freq_Cooperators": n_c / n,
+        "Freq_Action_C": n_action_c / n,
         "Avg_Agent_Resource": sum_res / n,
         "Avg_Vision": sum_vis / n,
         "Avg_Metabolism": sum_met / n,
+        "Freq_AlwaysC": n_always_c / n,
+        "Freq_AlwaysD": n_always_d / n,
+        "Freq_TFT": n_tft / n,
+        "Freq_WSLS": n_wsls / n,
+        "Freq_GTFT": n_gtft / n,
     }
-
 
 class AgentsModel(Model):
     def __init__(self, seed=None, **kwargs):
         from .config import Config
-
         if "cfg" in kwargs and isinstance(kwargs["cfg"], Config):
             self.cfg = kwargs["cfg"]
         else:
             self.cfg = Config(**kwargs)
-
+            
         self._seed = seed if seed is not None else getattr(self.cfg, "seed", 42)
         self.rng = np.random.default_rng(self._seed)
-
+        
         try:
             super().__init__(rng=self._seed)
         except TypeError:
             super().__init__(seed=self._seed)
-
+            
         self.grid = MultiGrid(self.cfg.width, self.cfg.height, torus=True)
         self.env = DynamicEnvironment(
             width=self.cfg.width,
@@ -62,25 +86,25 @@ class AgentsModel(Model):
             catastrophe_severity=self.cfg.catastrophe_severity,
             rng=self.rng,
         )
-
-        # Кэш соседних клеток
+        
         self._neighborhood_cache = {}
-
-        # Инициализация агентов
+        
+        # Расширенный набор стратегий
+        strategies = ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]
+        
         for _ in range(self.cfg.initial_agents):
             genome = Genome(
                 vision=int(self.rng.integers(self.cfg.min_vision, self.cfg.max_vision + 1)),
                 metabolism=float(self.rng.uniform(self.cfg.min_metabolism, self.cfg.max_metabolism)),
-                strategy=str(self.rng.choice(["C", "D"])),
+                strategy=str(self.rng.choice(strategies)),
                 max_age=self.cfg.max_age,
             )
             x = int(self.rng.integers(0, self.cfg.width))
             y = int(self.rng.integers(0, self.cfg.height))
-            
             agent = EcoAgent(self, genome=genome)
-            agent.resource = self.cfg.initial_resource  # Стартовый ресурс только при инициализации
+            agent.resource = self.cfg.initial_resource
             self.grid.place_agent(agent, (x, y))
-
+            
         self.datacollector = DataCollector(
             model_reporters={
                 "Population": lambda m: m._stats["Population"],
@@ -88,12 +112,17 @@ class AgentsModel(Model):
                 "Season_Phase": lambda m: m.env.season_phase,
                 "Catastrophe_Active": lambda m: 1 if m.env.catastrophe_active else 0,
                 "Freq_Cooperators": lambda m: m._stats["Freq_Cooperators"],
+                "Freq_Action_C": lambda m: m._stats["Freq_Action_C"],
                 "Avg_Agent_Resource": lambda m: m._stats["Avg_Agent_Resource"],
                 "Avg_Vision": lambda m: m._stats["Avg_Vision"],
                 "Avg_Metabolism": lambda m: m._stats["Avg_Metabolism"],
+                "Freq_AlwaysC": lambda m: m._stats["Freq_AlwaysC"],
+                "Freq_AlwaysD": lambda m: m._stats["Freq_AlwaysD"],
+                "Freq_TFT": lambda m: m._stats["Freq_TFT"],
+                "Freq_WSLS": lambda m: m._stats["Freq_WSLS"],
+                "Freq_GTFT": lambda m: m._stats["Freq_GTFT"],
             }
         )
-        
         self._stats = compute_stats(self)
         self.datacollector.collect(self)
         self.steps_run = 0
@@ -104,47 +133,34 @@ class AgentsModel(Model):
         cached = self._neighborhood_cache.get(key)
         if cached is not None:
             return cached
-
+            
         raw = self.grid.get_neighborhood(pos, moore=True, include_center=True, radius=radius)
-        
-        # Удаляем дубликаты, сохраняя порядок
         seen = set()
         unique = []
         for cell in raw:
             if cell not in seen:
                 seen.add(cell)
                 unique.append(cell)
-
         self._neighborhood_cache[key] = unique
         return unique
 
     def step(self):
         """Синхронный шаг модели."""
-        # 1. Обновление среды
         self.env.step()
-
-        # Получаем список активных агентов (живых на начало шага)
         active_agents = [a for a in self.agents if a.alive]
-
-        # 2. Фаза движения (все видят среду ДО сбора ресурса)
+        
         for agent in active_agents:
             agent.age += 1
             agent.perceive_and_move()
-
-        # 3. Фаза сбора ресурса (одновременная конкуренция)
+            
         self._harvest_cells(active_agents)
-
-        # 4. Фаза взаимодействий (агрегированная, средний выигрыш)
         self._interact_cells_aggregated(active_agents)
-
-        # 5. Фаза метаболизма
+        
         for agent in active_agents:
             agent.metabolize()
-
-        # 6. Эволюция (размножение и смерть)
+            
         self._evolution_step()
-
-        # 7. Сбор данных
+        
         self._stats = compute_stats(self)
         self.datacollector.collect(self)
         self.steps_run += 1
@@ -154,71 +170,83 @@ class AgentsModel(Model):
         by_cell = {}
         for agent in agents:
             by_cell.setdefault(agent.pos, []).append(agent)
-
+            
         env_resource = self.env.resource
-
         for (x, y), cell_agents in by_cell.items():
             demands = [a.genome.metabolism * 2.0 for a in cell_agents]
             total_demand = sum(demands)
-
             if total_demand <= 0:
                 continue
-
+                
             available = env_resource[y, x]
             if available <= 0:
                 continue
-
+                
             if total_demand <= available:
-                # Ресурса хватает всем
                 for agent, demand in zip(cell_agents, demands):
                     agent.resource += demand
                 env_resource[y, x] -= total_demand
             else:
-                # Ресурса не хватает — делим пропорционально
                 scale = available / total_demand
                 for agent, demand in zip(cell_agents, demands):
                     agent.resource += demand * scale
                 env_resource[y, x] = 0.0
 
     def _interact_cells_aggregated(self, agents):
-        """Агрегированные взаимодействия со средним выигрышем."""
+        """Агрегированные взаимодействия с использованием новых стратегий."""
         by_cell = {}
         for agent in agents:
             by_cell.setdefault(agent.pos, []).append(agent)
-
+            
         game = self.cfg.game
-
         for cell_agents in by_cell.values():
             n = len(cell_agents)
             if n <= 1:
                 continue
-
-            n_c = sum(1 for a in cell_agents if a.genome.strategy == "C")
+                
+            # 1. Агенты принимают решения на основе памяти и стратегии
+            actions = {}
+            for a in cell_agents:
+                actions[a.unique_id] = a.get_action()
+                
+            n_c = sum(1 for a in cell_agents if actions[a.unique_id] == "C")
             n_d = n - n_c
             denom = max(1, n - 1)
-
-            # Средний выигрыш за контакт (нормировка)
+            
             c_payoff = ((n_c - 1) * game.R + n_d * game.S) / denom
             d_payoff = (n_c * game.T + (n_d - 1) * game.P) / denom
-
+            
+            # 2. Начисление выигрышей и обновление памяти
             for a in cell_agents:
-                if a.genome.strategy == "C":
-                    a.resource += c_payoff
+                action = actions[a.unique_id]
+                if action == "C":
+                    payoff = c_payoff
                 else:
-                    a.resource += d_payoff
+                    payoff = d_payoff
+                    
+                a.resource += payoff
+                
+                a.last_action = action
+                a.last_payoff = payoff
+                
+                # Расчет доли кооператоров среди СОСЕДЕЙ (исключая самого агента)
+                if n > 1:
+                    other_c = n_c - (1 if action == "C" else 0)
+                    other_n = n - 1
+                    a.last_cell_coop_rate = other_c / other_n
+                else:
+                    a.last_cell_coop_rate = 1.0
 
     def _evolution_step(self):
-        # Размножение
         newborns = []
         for agent in list(self.agents):
             if agent.can_reproduce():
                 child = agent.reproduce()
                 newborns.append((child, agent.pos))
-
+                
         for child, spawn_pos in newborns:
             self.grid.place_agent(child, spawn_pos)
-
-        # Удаление мёртвых
+            
         for agent in list(self.agents):
             if not agent.alive:
                 self.grid.remove_agent(agent)

@@ -12,3 +12,9 @@ Thumbs.db
 # Редакторы
 .idea/
 .vscode/
+
+agentsenv/
+__pycache__/
+*.pyc
+out/
+Литература/
