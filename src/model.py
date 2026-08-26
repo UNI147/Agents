@@ -5,6 +5,7 @@ import numpy as np
 
 from .agent import EcoAgent, Genome
 from .environment import DynamicEnvironment
+import math
 
 def compute_stats(model):
     """Единый проход по агентам для сбора всей статистики."""
@@ -153,6 +154,9 @@ class AgentsModel(Model):
         self._harvest_cells(active_agents)
         self._interact_cells_aggregated(active_agents)
         
+        # === Пункт 1.3: Правила имитации (Культурная эволюция) ===
+        self._imitation_step(active_agents)
+        
         for agent in active_agents:
             agent.metabolize()
             
@@ -161,6 +165,90 @@ class AgentsModel(Model):
         self._stats = compute_stats(self)
         self.datacollector.collect(self)
         self.steps_run += 1
+
+    def _imitation_step(self, agents):
+        """
+        Реализация протоколов имитации (Fermi, Proportional, Pairwise).
+        Агент сравнивает свой ресурс (fitness) с соседями и может перенять стратегию.
+        """
+        protocol = getattr(self.cfg, "imitation_protocol", "none")
+        if protocol == "none":
+            return
+            
+        m = getattr(self.cfg, "selection_intensity", 1.0)
+        
+        # Для pairwise difference нужно знать максимальную разницу выигрышей в популяции
+        if protocol == "pairwise":
+            payoffs = [a.resource for a in agents]
+            max_diff = (max(payoffs) - min(payoffs)) if len(payoffs) >= 2 else 1.0
+            if max_diff == 0: max_diff = 1.0
+
+        for agent in agents:
+            # Получаем соседей по радиусу 1 (окрестность Мура)
+            neighbors_pos = self.get_neighborhood_cached(agent.pos, 1)
+            neighbors = []
+            for pos in neighbors_pos:
+                cellmates = self.grid.get_cell_list_contents(pos)
+                neighbors.extend(cellmates)
+            
+            # Исключаем самого агента из списка соседей
+            neighbors = [n for n in neighbors if n.unique_id != agent.unique_id]
+            if not neighbors:
+                continue
+                
+            pi_i = agent.resource
+            
+            # 1. Proportional Imitation (imitative-positive-proportional-m)
+            if protocol == "proportional":
+                candidates = neighbors + [agent]
+                weights = [max(0.0, c.resource) for c in candidates]
+                max_w = max(weights) if weights else 1.0
+                
+                # Нормализация для предотвращения переполнения при возведении в степень m
+                if max_w > 0:
+                    weights = [(w / max_w)**m for w in weights]
+                else:
+                    weights = [1.0 for _ in candidates]
+                    
+                total_w = sum(weights)
+                if total_w > 0:
+                    probs = [w / total_w for w in weights]
+                    chosen = self.rng.choice(candidates, p=probs)
+                    if chosen.unique_id != agent.unique_id:
+                        agent.genome.strategy = chosen.genome.strategy
+                continue
+
+            # Для Fermi и Pairwise выбираем одного случайного соседа для сравнения
+            neighbor = self.rng.choice(neighbors)
+            pi_j = neighbor.resource
+            delta = pi_j - pi_i
+            
+            switch = False
+            
+            # 2. Fermi Rule (imitative-logit-m)
+            if protocol == "fermi":
+                # P = 1 / (1 + exp(-m * delta))
+                # Защита от OverflowError в math.exp
+                if -m * delta > 500:
+                    prob = 0.0
+                elif -m * delta < -500:
+                    prob = 1.0
+                else:
+                    prob = 1.0 / (1.0 + math.exp(-m * delta))
+                    
+                if self.rng.random() < prob:
+                    switch = True
+                    
+            # 3. Pairwise Difference (imitative-pairwise-difference)
+            elif protocol == "pairwise":
+                if delta > 0:
+                    prob = delta / max_diff
+                    if self.rng.random() < prob:
+                        switch = True
+                        
+            # Применение имитации (смена стратегии в геноме)
+            if switch:
+                agent.genome.strategy = neighbor.genome.strategy
 
     def _harvest_cells(self, agents):
         by_cell = {}
