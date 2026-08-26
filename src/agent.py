@@ -1,6 +1,7 @@
 from mesa import Agent
 from dataclasses import dataclass, replace
 import numpy as np
+from collections import deque
 
 @dataclass
 class Genome:
@@ -18,7 +19,6 @@ class Genome:
                 np.clip(g.metabolism + rng.uniform(-0.5, 0.5), min_metabolism, max_metabolism)
             )
         if rng.random() < rate:
-            # Расширенный набор стратегий (Пункт 1.1)
             strategies = ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]
             g.strategy = rng.choice(strategies)
         if rng.random() < rate:
@@ -34,39 +34,73 @@ class EcoAgent(Agent):
         self.resource = 0.0
         self.age = 0
         
-        # Память для условных стратегий (Реализация базы для Пункта 1.2)
+        # Базовая память
         self.last_action = "C"
         self.last_payoff = 0.0
-        self.last_cell_coop_rate = 1.0  # Изначально предполагаем, что окружение кооперативно
+        self.last_cell_coop_rate = 1.0
+        
+        # Память о партнерах и истории (Пункт 1.2)
+        memory_size = getattr(self.model.cfg, "memory_size", 10)
+        self.partners = {}  # {partner_id: {"last_action": "C"/"D", "last_seen": step}}
+        self.interaction_history = deque(maxlen=memory_size)
 
     @property
     def alive(self):
         return self.resource > 0 and self.age < self.genome.max_age
 
-    def get_action(self):
+    def get_action(self, current_partners=None):
         """Определяет действие агента на основе его стратегии и памяти."""
         strat = self.genome.strategy
         if strat in ("C", "AlwaysC"):
             return "C"
         elif strat in ("D", "AlwaysD"):
             return "D"
+            
         elif strat == "TFT":
-            # Tit-for-Tat: копирует поведение большинства соседей в прошлый раз
+            # Tit-for-Tat: копирует поведение последних партнёров
+            if current_partners and len(current_partners) > 1:
+                remembered_actions = []
+                for other in current_partners:
+                    if other.unique_id != self.unique_id and other.unique_id in self.partners:
+                        remembered_actions.append(self.partners[other.unique_id]["last_action"])
+                if remembered_actions:
+                    coop_rate = remembered_actions.count("C") / len(remembered_actions)
+                    return "C" if coop_rate >= 0.5 else "D"
+            # Fallback на общую память клетки
             return "C" if self.last_cell_coop_rate >= 0.5 else "D"
+            
         elif strat == "GTFT":
             # Generous Tit-for-Tat: прощает дефекцию с вероятностью ~33%
-            if self.last_cell_coop_rate >= 0.5:
+            coop_rate = self.last_cell_coop_rate
+            if current_partners and len(current_partners) > 1:
+                remembered_actions = []
+                for other in current_partners:
+                    if other.unique_id != self.unique_id and other.unique_id in self.partners:
+                        remembered_actions.append(self.partners[other.unique_id]["last_action"])
+                if remembered_actions:
+                    coop_rate = remembered_actions.count("C") / len(remembered_actions)
+                    
+            if coop_rate >= 0.5:
                 return "C"
             else:
                 return "C" if self.model.rng.random() < 0.33 else "D"
+                
         elif strat == "WSLS":
             # Win-Stay, Lose-Shift (Pavlov)
-            # "Выигрыш" если выигрыш строго больше, чем при взаимной дефекции (P)
             P = self.model.cfg.game.P
+            # Используем историю, если она есть
+            if self.interaction_history:
+                last_mem = self.interaction_history[-1]
+                if last_mem["payoff"] > P + 1e-6:
+                    return last_mem["action"]
+                else:
+                    return "D" if last_mem["action"] == "C" else "C"
+            # Fallback
             if self.last_payoff > P + 1e-6:
                 return self.last_action
             else:
                 return "D" if self.last_action == "C" else "C"
+                
         return "C"
 
     def perceive_and_move(self):

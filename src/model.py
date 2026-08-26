@@ -33,7 +33,7 @@ def compute_stats(model):
             n_always_d += 1
         elif strat == "TFT":
             n_tft += 1
-            n_c += 1 # Условные кооператоры тоже считаются в общий пул "склонных к кооперации"
+            n_c += 1 
         elif strat == "WSLS":
             n_wsls += 1
         elif strat == "GTFT":
@@ -88,8 +88,6 @@ class AgentsModel(Model):
         )
         
         self._neighborhood_cache = {}
-        
-        # Расширенный набор стратегий
         strategies = ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]
         
         for _ in range(self.cfg.initial_agents):
@@ -128,7 +126,6 @@ class AgentsModel(Model):
         self.steps_run = 0
 
     def get_neighborhood_cached(self, pos, radius):
-        """Кэшированное получение соседей с удалением дубликатов."""
         key = (pos[0], pos[1], radius)
         cached = self._neighborhood_cache.get(key)
         if cached is not None:
@@ -166,7 +163,6 @@ class AgentsModel(Model):
         self.steps_run += 1
 
     def _harvest_cells(self, agents):
-        """Одновременный сбор ресурса с пропорциональным дележом."""
         by_cell = {}
         for agent in agents:
             by_cell.setdefault(agent.pos, []).append(agent)
@@ -193,21 +189,34 @@ class AgentsModel(Model):
                 env_resource[y, x] = 0.0
 
     def _interact_cells_aggregated(self, agents):
-        """Агрегированные взаимодействия с использованием новых стратегий."""
+        """Агрегированные взаимодействия с использованием памяти (Пункт 1.2)."""
         by_cell = {}
         for agent in agents:
             by_cell.setdefault(agent.pos, []).append(agent)
             
         game = self.cfg.game
+        memory_size = getattr(self.cfg, "memory_size", 10)
+        
         for cell_agents in by_cell.values():
             n = len(cell_agents)
             if n <= 1:
+                # Даже если агент один, обновляем его состояние и историю
+                for a in cell_agents:
+                    a.last_action = a.get_action([])
+                    a.last_payoff = 0.0
+                    a.last_cell_coop_rate = 1.0
+                    a.interaction_history.append({
+                        "step": self.steps_run,
+                        "action": a.last_action,
+                        "payoff": 0.0,
+                        "cell_coop_rate": 1.0
+                    })
                 continue
                 
             # 1. Агенты принимают решения на основе памяти и стратегии
             actions = {}
             for a in cell_agents:
-                actions[a.unique_id] = a.get_action()
+                actions[a.unique_id] = a.get_action(cell_agents)
                 
             n_c = sum(1 for a in cell_agents if actions[a.unique_id] == "C")
             n_d = n - n_c
@@ -229,13 +238,32 @@ class AgentsModel(Model):
                 a.last_action = action
                 a.last_payoff = payoff
                 
-                # Расчет доли кооператоров среди СОСЕДЕЙ (исключая самого агента)
-                if n > 1:
-                    other_c = n_c - (1 if action == "C" else 0)
-                    other_n = n - 1
-                    a.last_cell_coop_rate = other_c / other_n
-                else:
-                    a.last_cell_coop_rate = 1.0
+                # Расчет доли кооператоров среди СОСЕДЕЙ
+                other_c = n_c - (1 if action == "C" else 0)
+                other_n = n - 1
+                a.last_cell_coop_rate = other_c / other_n if other_n > 0 else 1.0
+                
+                # Обновление памяти о партнерах (Пункт 1.2)
+                for other in cell_agents:
+                    if other.unique_id != a.unique_id:
+                        a.partners[other.unique_id] = {
+                            "last_action": actions[other.unique_id],
+                            "last_seen": self.steps_run
+                        }
+                        
+                # Очистка старой памяти (агент забывает тех, с кем давно не пересекался)
+                a.partners = {
+                    pid: info for pid, info in a.partners.items()
+                    if self.steps_run - info["last_seen"] <= memory_size
+                }
+                
+                # Сохранение в историю взаимодействий
+                a.interaction_history.append({
+                    "step": self.steps_run,
+                    "action": action,
+                    "payoff": payoff,
+                    "cell_coop_rate": a.last_cell_coop_rate
+                })
 
     def _evolution_step(self):
         newborns = []

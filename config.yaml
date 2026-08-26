@@ -22,6 +22,9 @@ max_metabolism: 4.0
 initial_resource: 15.0
 max_age: 200
 
+# Память (Пункт 1.2)
+memory_size: 10
+
 # Эволюция
 reproduction_threshold: 40.0
 mutation_rate: 0.1

@@ -1,40 +1,33 @@
 @echo off
 chcp 65001 >nul
-
 echo ========================================
-echo Запуск в окружении
+echo Starting environment
 echo ========================================
 echo.
-
-:: Проверка существования окружения
+:: Check if environment exists
 if not exist "agentsenv\Scripts\activate.bat" (
-    echo [ОШИБКА] Виртуальное окружение не найдено!
-    echo Сначала запустите venv0.1.bat или venv0.3.bat.
+    echo [ERROR] Virtual environment not found!
+    echo Please run venv0.1.bat or venv0.3.bat first.
     echo.
     pause
     exit /b 1
 )
-
-echo [INFO] Активация виртуального окружения...
+echo [INFO] Activating virtual environment...
 call agentsenv\Scripts\activate.bat
-
-echo [INFO] Запуск сканирования...
+echo [INFO] Starting tree scan...
 echo.
 echo ========================================
 echo.
-
 python scan_tree.py
 set EXIT_CODE=%ERRORLEVEL%
-
 echo.
 echo ========================================
 if %EXIT_CODE% equ 0 (
-    echo [ГОТОВО] Сканирование завершилось успешно
+    echo [DONE] Scan finished successfully
 ) else (
-    echo [ОШИБКА] Сканирование провалилось (код: %EXIT_CODE%)
+    echo [ERROR] Scan failed with code: %EXIT_CODE%
 )
 echo ========================================
 echo.
-
 pause
 exit /b %EXIT_CODE%

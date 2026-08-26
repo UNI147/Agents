@@ -1,61 +1,50 @@
 @echo off
 chcp 65001 >nul
-
 set PYTHON_PATH=C:\Users\Hatul\AppData\Local\Programs\Python\Python312\python.exe
-
 echo ========================================
-echo Пересоздание виртуального окружения
+echo Recreating virtual environment
 echo ========================================
 echo.
-
-:: Проверка существования Python
+:: Check if Python exists
 if not exist "%PYTHON_PATH%" (
-    echo [ОШИБКА] Python не найден по пути: %PYTHON_PATH%
-    echo Проверьте правильность пути к Python
+    echo [ERROR] Python not found at path: %PYTHON_PATH%
+    echo Please check the Python path.
     pause
     exit /b 1
 )
-
-echo [OK] Python найден: %PYTHON_PATH%
+echo [OK] Python found: %PYTHON_PATH%
 "%PYTHON_PATH%" --version
 echo.
-
-:: Удаление старого окружения, если существует
+:: Remove old environment if it exists
 if exist "agentsenv" (
-    echo [INFO] Удаление старого окружения...
+    echo [INFO] Removing old environment...
     rmdir /s /q "agentsenv"
     if exist "agentsenv" (
-        echo [ОШИБКА] Не удалось полностью удалить старое окружение
-        echo Возможно, оно используется другим процессом
+        echo [ERROR] Failed to completely remove old environment
+        echo It might be in use by another process.
         pause
         exit /b 1
     )
-    echo [OK] Старое окружение удалено
+    echo [OK] Old environment removed
     echo.
 )
-
-:: Создание нового окружения
-echo [INFO] Создание нового виртуального окружения...
+:: Create new environment
+echo [INFO] Creating new virtual environment...
 "%PYTHON_PATH%" -m venv agentsenv
-
 if not exist "agentsenv\Scripts\activate.bat" (
-    echo [ОШИБКА] Не удалось создать виртуальное окружение
+    echo [ERROR] Failed to create virtual environment
     pause
     exit /b 1
 )
-
-echo [OK] Виртуальное окружение создано
+echo [OK] Virtual environment created
 echo.
-
-:: Активация
-echo [INFO] Активация окружения...
+:: Activation
+echo [INFO] Activating environment...
 call agentsenv\Scripts\activate.bat
-
 echo.
 echo ========================================
-echo [ГОТОВО] Виртуальное окружение пересоздано
+echo [DONE] Virtual environment recreated
 echo ========================================
 echo.
-
 pause
 exit /b 0

@@ -31,6 +31,7 @@ class Config:
     max_metabolism: float
     initial_resource: float
     max_age: int
+    memory_size: int  # Добавлено для Пункта 1.2
     reproduction_threshold: float
     mutation_rate: float
     R: float

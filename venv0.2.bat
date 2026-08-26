@@ -1,39 +1,31 @@
 @echo off
 chcp 65001 >nul
-
-:: Проверка существования окружения
+:: Check if environment exists
 if not exist "agentsenv\Scripts\activate.bat" (
-    echo [ОШИБКА] Виртуальное окружение не найдено!
-    echo Сначала запустите venv0.1.bat или venv0.3.bat
+    echo [ERROR] Virtual environment not found!
+    echo Please run venv0.1.bat or venv0.3.bat first.
     pause
     exit /b 1
 )
-
 echo ========================================
-echo Запуск окружения
+echo Starting environment
 echo ========================================
-
-:: Активация окружения
+:: Activate environment
 call agentsenv\Scripts\activate
-
-echo [OK] Виртуальное окружение активировано
-echo [OK] Python: 
+echo [OK] Virtual environment activated
+echo [OK] Python version:
 python --version
 echo.
-
 pip install networkx
-
-:: Экспорт актуального списка всех зависимостей в requirements.txt
-echo [INFO] Обновление requirements.txt...
+:: Export current dependencies to requirements.txt
+echo [INFO] Updating requirements.txt...
 pip freeze > requirements.txt
 if %errorlevel% neq 0 (
-    echo [ОШИБКА] Не удалось обновить requirements.txt
+    echo [ERROR] Failed to update requirements.txt
     pause
     exit /b 1
 )
-
-echo [OK] requirements.txt обновлён (все установленные пакеты)
+echo [OK] requirements.txt updated (all installed packages)
 echo.
-
 pause
-exit /b %EXIT_CODE%
+exit /b %ERRORLEVEL%

@@ -1,47 +1,37 @@
 @echo off
 chcp 65001 >nul
-
 set PYTHON_PATH=C:\Users\Hatul\AppData\Local\Programs\Python\Python312\python.exe
-
 echo ========================================
-echo Cоздание виртуального окружения
+echo Creating virtual environment
 echo ========================================
 echo.
-
-:: Проверка существования Python
+:: Check if Python exists
 if not exist "%PYTHON_PATH%" (
-    echo [ОШИБКА] Python не найден по пути: %PYTHON_PATH%
-    echo Проверьте правильность пути к Python
+    echo [ERROR] Python not found at path: %PYTHON_PATH%
+    echo Please check the Python path.
     pause
     exit /b 1
 )
-
-echo [OK] Python найден: %PYTHON_PATH%
+echo [OK] Python found: %PYTHON_PATH%
 "%PYTHON_PATH%" --version
 echo.
-
-:: Создание нового окружения
-echo [INFO] Создание нового виртуального окружения...
+:: Create new environment
+echo [INFO] Creating new virtual environment...
 "%PYTHON_PATH%" -m venv agentsenv
-
 if not exist "agentsenv\Scripts\activate.bat" (
-    echo [ОШИБКА] Не удалось создать виртуальное окружение
+    echo [ERROR] Failed to create virtual environment
     pause
     exit /b 1
 )
-
-echo [OK] Виртуальное окружение создано
+echo [OK] Virtual environment created
 echo.
-
-:: Активация
-echo [INFO] Активация окружения...
+:: Activation
+echo [INFO] Activating environment...
 call agentsenv\Scripts\activate.bat
-
 echo.
 echo ========================================
-echo [ГОТОВО] Виртуальное окружение создано
+echo [DONE] Virtual environment is ready
 echo ========================================
 echo.
-
 pause
 exit /b 0
