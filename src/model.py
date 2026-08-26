@@ -79,6 +79,22 @@ def compute_stats(model):
             imit_type_successes[t] / attempts if attempts > 0 else 0.0
         )
 
+
+    # === СТАТИСТИКА ГРУПП (Пункт 1.6) ===
+    if getattr(model.cfg, "group_selection_enabled", False):
+        group_res = {}
+        for a in model.agents:
+            group_res.setdefault(a.group_id, []).append(a.resource)
+        stats["Alive_Groups"] = len(group_res)
+        if len(group_res) > 1:
+            means = [sum(v)/len(v) for v in group_res.values()]
+            stats["Group_Fitness_Variance"] = float(np.var(means))
+        else:
+            stats["Group_Fitness_Variance"] = 0.0
+    else:
+        stats["Alive_Groups"] = 1
+        stats["Group_Fitness_Variance"] = 0.0
+
     return stats
 
 
@@ -87,6 +103,7 @@ def _empty_stats():
         "Population": 0, "Freq_Cooperators": 0.0, "Freq_Action_C": 0.0,
         "Avg_Agent_Resource": 0.0, "Avg_Vision": 0.0, "Avg_Metabolism": 0.0,
         "Avg_Imitation_Intensity": 0.0, "Avg_Imitation_Rate": 0.0,
+        "Alive_Groups": 1, "Group_Fitness_Variance": 0.0,
     }
     for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]:
         stats[f"Freq_{s}"] = 0.0
@@ -133,7 +150,10 @@ class AgentsModel(Model):
         self._slot_to_agent = {}
         
         strategies = ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]
-        for _ in range(self.cfg.initial_agents):
+        num_groups = getattr(self.cfg, "num_groups", 10)
+        gs_enabled = getattr(self.cfg, "group_selection_enabled", False)
+        
+        for i in range(self.cfg.initial_agents):
             genome = Genome(
                 vision=int(self.rng.integers(self.cfg.min_vision, self.cfg.max_vision + 1)),
                 metabolism=float(self.rng.uniform(self.cfg.min_metabolism, self.cfg.max_metabolism)),
@@ -149,7 +169,8 @@ class AgentsModel(Model):
             x = int(self.rng.integers(0, self.cfg.width))
             y = int(self.rng.integers(0, self.cfg.height))
             
-            agent = EcoAgent(self, genome=genome)
+            group_id = i % num_groups if gs_enabled else 0
+            agent = EcoAgent(self, genome=genome, group_id=group_id)
             agent.resource = self.cfg.initial_resource
             agent.network_slot = self.max_slots
             self.max_slots += 1
@@ -174,6 +195,8 @@ class AgentsModel(Model):
             "Avg_Metabolism": lambda m: m._stats["Avg_Metabolism"],
             "Avg_Imitation_Intensity": lambda m: m._stats["Avg_Imitation_Intensity"],
             "Avg_Imitation_Rate": lambda m: m._stats["Avg_Imitation_Rate"],
+            "Alive_Groups": lambda m: m._stats["Alive_Groups"],
+            "Group_Fitness_Variance": lambda m: m._stats["Group_Fitness_Variance"],
         }
         for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]:
             reporters[f"Freq_{s}"] = lambda m, _s=s: m._stats[f"Freq_{_s}"]
@@ -339,12 +362,37 @@ class AgentsModel(Model):
         else:
             self._interact_cells_aggregated(active_agents)
 
+        # === МНОГОУРОВНЕВЫЙ ОТБОР: ВНУТРИГРУППОВОЙ БОНОУС ===
+        if getattr(self.cfg, "group_selection_enabled", False):
+            alpha = getattr(self.cfg, "group_selection_intensity", 0.0)
+            if alpha > 0:
+                group_payoffs = {}
+                group_counts = {}
+                for a in active_agents:
+                    gid = a.group_id
+                    group_payoffs[gid] = group_payoffs.get(gid, 0.0) + a.last_payoff
+                    group_counts[gid] = group_counts.get(gid, 0) + 1
+                    
+                group_avg = {gid: group_payoffs[gid] / group_counts[gid] for gid in group_payoffs}
+                
+                for a in active_agents:
+                    avg_g = group_avg.get(a.group_id, a.last_payoff)
+                    # Корректировка ресурса: смесь личного и группового успеха
+                    bonus = alpha * (avg_g - a.last_payoff)
+                    a.resource += bonus
+
         # 4. Фаза социального обучения (Пункт 1.3)
         self._imitation_step(active_agents)
 
         # 5. Метаболизм
         for agent in active_agents:
             agent.metabolize()
+
+        # === МНОГОУРОВНЕВЫЙ ОТБОР: КОНКУРЕНЦИЯ ГРУПП ===
+        if getattr(self.cfg, "group_selection_enabled", False):
+            comp_step = getattr(self.cfg, "group_competition_step", 50)
+            if comp_step > 0 and self.steps_run > 0 and self.steps_run % comp_step == 0:
+                self._group_competition_step()
 
         # 6. Эволюция
         self._evolution_step()
@@ -353,6 +401,39 @@ class AgentsModel(Model):
         self._stats = compute_stats(self)
         self.datacollector.collect(self)
         self.steps_run += 1
+
+    def _group_competition_step(self):
+        """
+        Конкуренция групп: группа с худшим средним ресурсом ассимилируется
+        группой с лучшим средним ресурсом (смена group_id + копирование стратегии).
+        """
+        groups = {}
+        for a in self.agents:
+            if a.alive:
+                groups.setdefault(a.group_id, []).append(a)
+                
+        if len(groups) < 2:
+            return
+            
+        group_fitness = {}
+        for gid, members in groups.items():
+            group_fitness[gid] = sum(m.resource for m in members) / len(members)
+            
+        best_gid = max(group_fitness, key=group_fitness.get)
+        worst_gid = min(group_fitness, key=group_fitness.get)
+        
+        if best_gid == worst_gid:
+            return
+            
+        worst_members = groups[worst_gid]
+        best_members = groups[best_gid]
+        
+        for agent in worst_members:
+            agent.group_id = best_gid
+            # Культурная/генетическая ассимиляция
+            if self.rng.random() < 0.5 and best_members:
+                role_model = self.rng.choice(best_members)
+                agent.genome.strategy = role_model.genome.strategy
 
     def _imitation_step(self, agents):
         use_network = (
@@ -492,6 +573,13 @@ class AgentsModel(Model):
         for child, spawn_pos, parent in newborns:
             child.network_slot = self.max_slots
             self.max_slots += 1
+            
+            # === НАСЛЕДОВАНИЕ ГРУППЫ И МИГРАЦИЯ ===
+            child.group_id = parent.group_id
+            if getattr(self.cfg, "group_selection_enabled", False):
+                mig_rate = getattr(self.cfg, "group_migration_rate", 0.0)
+                if self.rng.random() < mig_rate:
+                    child.group_id = int(self.rng.integers(0, getattr(self.cfg, "num_groups", 10)))
 
             self.grid.place_agent(child, spawn_pos)
 

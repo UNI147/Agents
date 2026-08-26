@@ -42,7 +42,7 @@ P: 1.0
 
 # Симуляция
 max_steps: 500
-seed: 69
+seed: 42
 
 # === СОЦИАЛЬНАЯ СЕТЬ (Пункт 3.1) ===
 network_type: "barabasi_albert" # Опции: "barabasi_albert" (scale-free), "watts_strogatz" (small-world), "random", "none"
@@ -57,3 +57,10 @@ max_network_degree: 0             # 0 = без ограничения; можн�
 use_food_carrying_capacity: true  # экологическая ёмкость по ресурсу
 max_population: 0                 # 0 = автоматически
 max_runtime_seconds: 0            # 0 = без ограничения по времени
+
+# Многоуровневый отбор (Пункт 1.6)
+group_selection_enabled: true
+num_groups: 10
+group_selection_intensity: 0.3  # Вес группового фитнеса (alpha)
+group_migration_rate: 0.02      # Вероятность смены группы при рождении
+group_competition_step: 50      # Каждые N шагов происходит конкуренция групп

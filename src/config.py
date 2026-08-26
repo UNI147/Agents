@@ -76,6 +76,13 @@ class Config:
     # 0 — без ограничения.
     max_runtime_seconds: float = 0.0
 
+    # === МНОГОУРОВНЕВЫЙ ОТБОР (Пункт 1.6) ===
+    group_selection_enabled: bool = False
+    num_groups: int = 10
+    group_selection_intensity: float = 0.3
+    group_migration_rate: float = 0.02
+    group_competition_step: int = 50
+
     @property
     def game(self) -> GamePayoffs:
         return GamePayoffs(self.R, self.S, self.T, self.P)

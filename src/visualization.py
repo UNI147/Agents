@@ -27,16 +27,26 @@ def plot_results(df: pd.DataFrame, save_path=None):
     fig = plt.figure(figsize=(18, 14))
     gs = fig.add_gridspec(3, 2, hspace=0.35, wspace=0.3)
 
-    # === 1. Популяция + катастрофы ===
+    # === 1. Популяция + катастрофы + Группы ===
     ax1 = fig.add_subplot(gs[0, 0])
-    ax1.plot(df['Step'], df['Population'], color='steelblue', linewidth=1.5)
-    ax1.set_title('Популяция агентов', fontsize=12, fontweight='bold')
+    ax1.plot(df['Step'], df['Population'], color='steelblue', linewidth=1.5, label='Популяция')
+    ax1.set_title('Популяция агентов и Групповая динамика', fontsize=12, fontweight='bold')
     ax1.set_xlabel('Шаг')
-    ax1.set_ylabel('Число агентов')
+    ax1.set_ylabel('Число агентов', color='steelblue')
+    ax1.tick_params(axis='y', labelcolor='steelblue')
+    
+    if 'Alive_Groups' in df.columns and df['Alive_Groups'].max() > 1:
+        ax1b = ax1.twinx()
+        ax1b.plot(df['Step'], df['Alive_Groups'], color='darkgreen', linestyle=':', linewidth=1.5, label='Живых групп')
+        ax1b.set_ylabel('Количество групп', color='darkgreen')
+        ax1b.tick_params(axis='y', labelcolor='darkgreen')
+        ax1b.legend(loc='upper right', fontsize=8)
+        
     for i, active in enumerate(df.get('Catastrophe_Active', [])):
         if active:
             ax1.axvspan(df['Step'].iloc[i], df['Step'].iloc[i] + 1,
                         color='red', alpha=0.12)
+    ax1.legend(loc='upper left', fontsize=8)
 
     # === 2. Частоты стратегий ===
     ax2 = fig.add_subplot(gs[0, 1])

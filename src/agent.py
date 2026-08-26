@@ -54,11 +54,12 @@ class Genome:
 class EcoAgent(Agent):
     """Агент с генетически обусловленным типом социального обучения."""
 
-    def __init__(self, model, genome):
+    def __init__(self, model, genome, group_id=0):
         super().__init__(model)
         self.genome = genome
         self.resource = 0.0
         self.age = 0
+        self.group_id = group_id  # === Принадлежность к группе ===
         
         # Базовая память
         self.last_action = "C"
