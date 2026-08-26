@@ -42,4 +42,18 @@ P: 1.0
 
 # Симуляция
 max_steps: 500
-seed: 42
+seed: 69
+
+# === СОЦИАЛЬНАЯ СЕТЬ (Пункт 3.1) ===
+network_type: "barabasi_albert" # Опции: "barabasi_albert" (scale-free), "watts_strogatz" (small-world), "random", "none"
+network_param_m: 3             # Число ребер, прикрепляемых к новому узлу (для BA)
+network_param_k: 4             # Число ближайших соседей (для WS, должно быть четным)
+network_param_p: 0.1           # Вероятность переподключения (для WS) / плотность (для random)
+
+# === Производительность и устойчивость ===
+network_payoff_mode: "mean"       # mean | sum
+offspring_network_edges: 0        # 0 = автоматически по типу сети
+max_network_degree: 0             # 0 = без ограничения; можно задать вручную
+use_food_carrying_capacity: true  # экологическая ёмкость по ресурсу
+max_population: 0                 # 0 = автоматически
+max_runtime_seconds: 0            # 0 = без ограничения по времени

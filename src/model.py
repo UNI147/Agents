@@ -5,6 +5,7 @@ import numpy as np
 
 from .agent import EcoAgent, Genome, IMITATION_TYPES
 from .environment import DynamicEnvironment
+import networkx as nx
 
 
 def compute_stats(model):
@@ -126,8 +127,12 @@ class AgentsModel(Model):
         )
 
         self._neighborhood_cache = {}
+        
+        # === СОЦИАЛЬНАЯ СЕТЬ ===
+        self.max_slots = 0
+        self._slot_to_agent = {}
+        
         strategies = ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]
-
         for _ in range(self.cfg.initial_agents):
             genome = Genome(
                 vision=int(self.rng.integers(self.cfg.min_vision, self.cfg.max_vision + 1)),
@@ -143,9 +148,18 @@ class AgentsModel(Model):
             )
             x = int(self.rng.integers(0, self.cfg.width))
             y = int(self.rng.integers(0, self.cfg.height))
+            
             agent = EcoAgent(self, genome=genome)
             agent.resource = self.cfg.initial_resource
+            agent.network_slot = self.max_slots
+            self.max_slots += 1
+            
             self.grid.place_agent(agent, (x, y))
+
+        # Построение начального графа
+        self.social_network = self._build_social_network()
+        self._network_neighbors_cache = {}
+        self._network_neighbors_cache_step = -1
 
         # === РЕГИСТРАЦИЯ ВСЕХ РЕПОРТЁРОВ ===
         reporters = {
@@ -174,6 +188,124 @@ class AgentsModel(Model):
         self.datacollector.collect(self)
         self.steps_run = 0
 
+    def _build_social_network(self):
+        n = self.max_slots
+        net_type = getattr(self.cfg, "network_type", "none")
+        if net_type == "none" or n <= 1:
+            return None
+            
+        if net_type == "barabasi_albert":
+            m = getattr(self.cfg, "network_param_m", 3)
+            m = max(1, min(m, n - 1))
+            G = nx.barabasi_albert_graph(n, m, seed=self._seed)
+        elif net_type == "watts_strogatz":
+            k = getattr(self.cfg, "network_param_k", 4)
+            p = getattr(self.cfg, "network_param_p", 0.1)
+            k = max(2, min(k, n - 1))
+            if k % 2 != 0: k += 1
+            G = nx.watts_strogatz_graph(n, k, p, seed=self._seed)
+        elif net_type == "random":
+            p = getattr(self.cfg, "network_param_p", 0.1)
+            G = nx.erdos_renyi_graph(n, p, seed=self._seed)
+        else:
+            return None
+        return G
+
+    def _interact_network(self, agents):
+        game = self.cfg.game
+        memory_size = getattr(self.cfg, "memory_size", 10)
+
+        self._slot_to_agent = {a.network_slot: a for a in agents}
+
+        mean_mode = getattr(self.cfg, "network_payoff_mode", "mean") == "mean"
+
+        for a in agents:
+            a.last_payoff = 0.0
+            a.last_action = None
+            a._network_neighbors_count = 0
+            a._network_coop_count = 0
+            a._payoff_sum = 0.0
+
+        # 1. Один раз кешируем живые сетевые связи и определяем действия.
+        network_neighbors = {}
+
+        for a in agents:
+            slot = a.network_slot
+            neigh = [
+                self._slot_to_agent[s]
+                for s in self.social_network.neighbors(slot)
+                if s in self._slot_to_agent
+            ]
+
+            network_neighbors[slot] = neigh
+            a.last_action = a.get_action(current_partners=neigh)
+
+        # 2. Розыгрыш игр вдоль рёбер.
+        for u_slot, v_slot in self.social_network.edges():
+            agent_u = self._slot_to_agent.get(u_slot)
+            agent_v = self._slot_to_agent.get(v_slot)
+
+            if agent_u is None or agent_v is None:
+                continue
+
+            action_u = agent_u.last_action
+            action_v = agent_v.last_action
+
+            payoff_u = game.payoff(action_u, action_v)
+            payoff_v = game.payoff(action_v, action_u)
+
+            agent_u._payoff_sum += payoff_u
+            agent_v._payoff_sum += payoff_v
+
+            agent_u._network_neighbors_count += 1
+            agent_v._network_neighbors_count += 1
+
+            if action_v == "C":
+                agent_u._network_coop_count += 1
+
+            if action_u == "C":
+                agent_v._network_coop_count += 1
+
+        # 3. Финализация payoff, ресурс, память.
+        for a in agents:
+            cnt = a._network_neighbors_count
+
+            if cnt > 0:
+                if mean_mode:
+                    a.last_payoff = a._payoff_sum / cnt
+                else:
+                    a.last_payoff = a._payoff_sum
+
+                a.last_cell_coop_rate = a._network_coop_count / cnt
+            else:
+                a.last_payoff = 0.0
+                a.last_cell_coop_rate = 1.0
+
+            a.resource += a.last_payoff
+
+            for other in network_neighbors.get(a.network_slot, []):
+                a.partners[other.unique_id] = {
+                    "last_action": other.last_action,
+                    "last_seen": self.steps_run
+                }
+
+            a.partners = {
+                pid: info
+                for pid, info in a.partners.items()
+                if self.steps_run - info["last_seen"] <= memory_size
+            }
+
+            a.interaction_history.append({
+                "step": self.steps_run,
+                "action": a.last_action,
+                "payoff": a.last_payoff,
+                "cell_coop_rate": a.last_cell_coop_rate
+            })
+
+        # Кеш используется дальше в _imitation_step.
+        self._network_neighbors_cache = network_neighbors
+        self._network_neighbors_cache_step = self.steps_run
+
     def get_neighborhood_cached(self, pos, radius):
         key = (pos[0], pos[1], radius)
         cached = self._neighborhood_cache.get(key)
@@ -190,7 +322,6 @@ class AgentsModel(Model):
         return unique
 
     def step(self):
-        """Синхронный шаг модели с имитацией."""
         self.env.step()
         active_agents = [a for a in self.agents if a.alive]
 
@@ -202,18 +333,20 @@ class AgentsModel(Model):
         # 2. Сбор ресурсов
         self._harvest_cells(active_agents)
 
-        # 3. Игровые взаимодействия
-        self._interact_cells_aggregated(active_agents)
+        # 3. Игровые взаимодействия (Сеть или Клетки)
+        if getattr(self.cfg, "network_type", "none") != "none" and self.social_network is not None:
+            self._interact_network(active_agents)
+        else:
+            self._interact_cells_aggregated(active_agents)
 
-        # 4. === ФАЗА СОЦИАЛЬНОГО ОБУЧЕНИЯ (ПУНКТ 1.3) ===
-        # Каждый агент может попытаться скопировать стратегию у соседей
+        # 4. Фаза социального обучения (Пункт 1.3)
         self._imitation_step(active_agents)
 
         # 5. Метаболизм
         for agent in active_agents:
             agent.metabolize()
 
-        # 6. Эволюция (размножение + смерть)
+        # 6. Эволюция
         self._evolution_step()
 
         # 7. Сбор статистики
@@ -222,17 +355,39 @@ class AgentsModel(Model):
         self.steps_run += 1
 
     def _imitation_step(self, agents):
-        """
-        Фаза социального обучения: каждый агент рассматривает соседей
-        и может сменить стратегию согласно своему генетическому типу имитации.
-        """
+        use_network = (
+            getattr(self.cfg, "network_type", "none") != "none"
+            and self.social_network is not None
+        )
+
+        cache_ok = (
+            use_network
+            and getattr(self, "_network_neighbors_cache_step", -1) == self.steps_run
+        )
+
         for agent in agents:
-            # Получаем соседей по Муру (радиус 1) — те, с кем агент мог взаимодействовать
-            neighbor_cells = self.get_neighborhood_cached(agent.pos, radius=1)
-            neighbors = []
-            for cell in neighbor_cells:
-                cell_agents = self.grid.get_cell_list_contents([cell])
-                neighbors.extend(cell_agents)
+            if use_network:
+                if cache_ok:
+                    neighbors = self._network_neighbors_cache.get(agent.network_slot, [])
+                else:
+                    neighbor_slots = list(self.social_network.neighbors(agent.network_slot))
+                    neighbors = [
+                        self._slot_to_agent[s]
+                        for s in neighbor_slots
+                        if s in self._slot_to_agent
+                    ]
+            else:
+                # Fallback на пространственных соседей.
+                neighbor_cells = self.get_neighborhood_cached(agent.pos, radius=1)
+                neighbors = []
+
+                for cell in neighbor_cells:
+                    cell_agents = self.grid.get_cell_list_contents([cell])
+                    neighbors.extend([
+                        a for a in cell_agents
+                        if isinstance(a, EcoAgent)
+                    ])
+
             agent.try_imitate(neighbors)
 
     def _harvest_cells(self, agents):
@@ -316,20 +471,112 @@ class AgentsModel(Model):
 
     def _evolution_step(self):
         newborns = []
+
+        capacity = getattr(self.cfg, "population_capacity", 10**9)
+
+        # Считаем живых агентов до рождения новых.
+        # Мертвые будут удалены ниже, но сейчас они еще могут быть в agents.
+        planned_population = sum(1 for a in self.agents if a.alive)
+
         for agent in list(self.agents):
+            if planned_population >= capacity:
+                break
+
             if agent.can_reproduce():
                 child = agent.reproduce()
-                newborns.append((child, agent.pos))
-        for child, spawn_pos in newborns:
+                newborns.append((child, agent.pos, agent))
+                planned_population += 1
+
+        cfg = self.cfg
+
+        for child, spawn_pos, parent in newborns:
+            child.network_slot = self.max_slots
+            self.max_slots += 1
+
             self.grid.place_agent(child, spawn_pos)
+
+            if self.social_network is not None:
+                self.social_network.add_node(child.network_slot)
+
+                parent_slot = parent.network_slot
+
+                if parent_slot in self.social_network:
+                    candidates = [
+                        s for s in self.social_network.neighbors(parent_slot)
+                        if s != child.network_slot
+                    ]
+
+                    max_deg = getattr(cfg, "max_network_degree", 0)
+
+                    target_edges = getattr(
+                        cfg,
+                        "target_offspring_edges",
+                        max(1, cfg.network_param_m)
+                    )
+
+                    k = int(target_edges)
+
+                    if max_deg > 0:
+                        # Не подключаемся к узлам, которые уже перегружены.
+                        candidates = [
+                            s for s in candidates
+                            if self.social_network.degree(s) < max_deg
+                        ]
+                        k = min(k, max_deg)
+
+                    if k > 0 and len(candidates) > k:
+                        candidates = list(
+                            self.rng.choice(candidates, size=k, replace=False)
+                        )
+
+                    for nb in candidates[:k]:
+                        self.social_network.add_edge(child.network_slot, nb)
+
+        # Смерть и удаление из графа.
         for agent in list(self.agents):
             if not agent.alive:
                 self.grid.remove_agent(agent)
+
+                if self.social_network is not None and agent.network_slot in self.social_network:
+                    self.social_network.remove_node(agent.network_slot)
+
                 agent.remove()
 
-    def run_model(self, steps):
+    def run_model(self, steps, log_every=25, max_seconds=None):
+        import time
+
+        start = time.time()
+
         for _ in range(steps):
             if len(self.agents) == 0:
                 print(f"Популяция вымерла на шаге {self.steps_run}", flush=True)
                 break
+
+            step_start = time.time()
+
             self.step()
+
+            step_time = time.time() - step_start
+
+            if log_every and self.steps_run % log_every == 0:
+                edges = 0
+                if self.social_network is not None:
+                    edges = self.social_network.number_of_edges()
+
+                print(
+                    f"[step {self.steps_run}] "
+                    f"agents={len(self.agents)}, "
+                    f"edges={edges}, "
+                    f"step_time={step_time:.3f}s",
+                    flush=True
+                )
+
+            if max_seconds is not None and max_seconds > 0:
+                elapsed = time.time() - start
+                if elapsed > max_seconds:
+                    print(
+                        f"Симуляция остановлена по лимиту времени: "
+                        f"{elapsed:.1f}s > {max_seconds:.1f}s",
+                        flush=True
+                    )
+                    break

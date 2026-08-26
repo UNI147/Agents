@@ -59,11 +59,14 @@ class EcoAgent(Agent):
         self.genome = genome
         self.resource = 0.0
         self.age = 0
-
+        
         # Базовая память
         self.last_action = "C"
         self.last_payoff = 0.0
         self.last_cell_coop_rate = 1.0
+        
+        # === Позиция в социальном графе ===
+        self.network_slot = None
 
         # Память о партнерах (Пункт 1.2)
         memory_size = getattr(self.model.cfg, "memory_size", 10)
@@ -156,8 +159,10 @@ class EcoAgent(Agent):
         )
         child_resource = self.resource / 2.0
         self.resource = child_resource
+        
         child = EcoAgent(self.model, genome=child_genome)
         child.resource = child_resource
+        # network_slot будет назначен в model._evolution_step()
         return child
 
     # ============================================================
@@ -229,16 +234,26 @@ class EcoAgent(Agent):
         с вероятностью (π_neighbor - π_self) / max_Δπ.
         """
         observed = self.model.rng.choice(others)
-        max_diff = getattr(self.model.cfg, "max_payoff_difference", 
-                           self.model.cfg.game.T - self.model.cfg.game.P)
+
+        max_diff = getattr(
+            self.model.cfg,
+            "max_payoff_difference",
+            self.model.cfg.game.T - self.model.cfg.game.P
+        )
+
         if max_diff <= 0:
             return None
+
         payoff_diff = observed.last_payoff - self.last_payoff
+
         if payoff_diff <= 0:
-            return None  # Сосед не лучше — не копируем
-        prob = payoff_diff / max_diff
+            return None
+
+        prob = min(1.0, max(0.0, payoff_diff / max_diff))
+
         if self.model.rng.random() < prob:
             return observed.genome.strategy
+
         return None
 
     def _imitate_proportional_moran(self, others):
