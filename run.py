@@ -56,6 +56,11 @@ def main():
     # 7. Сохранение графика
     plot_results(df_model, save_path=plot_path)
 
+    # === Сравнение успешности типов имитаторов ===
+    from src.visualization import plot_imitation_comparison
+    comparison_path = os.path.join(output_dir, "imitation_comparison.png")
+    plot_imitation_comparison(df_model, save_path=comparison_path)
+
     # 8. Бэкап конфигурации (очень полезно для воспроизводимости)
     if os.path.exists("config.yaml"):
         shutil.copy2("config.yaml", config_backup_path)
