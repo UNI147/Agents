@@ -20,20 +20,19 @@ max_metabolism: 3.0
 # === ПАРАМЕТРЫ МЕТАБОЛИЗМА (SPICE) - Пункт 2.1 ===
 min_metabolism_spice: 1.0
 max_metabolism_spice: 4.0
-initial_resource: 18.4
-initial_spice: 18.4
+initial_resource: 18.5
+initial_spice: 18.5
 
-initial_agents: 80
-
+initial_agents: 75
 max_age: 300
 
 # Память (Пункт 1.2)
 memory_size: 10
 
 # === СОЦИАЛЬНОЕ ОБУЧЕНИЕ (Пункт 1.3) ===
-min_imitation_intensity: 0.1    # Минимальный параметр m для Ферми/Моран
-max_imitation_intensity: 10.0   # Максимальный параметр m
-initial_imitation_rate: 0.2     # Начальная вероятность попытки имитации
+min_imitation_intensity: 0.1
+max_imitation_intensity: 10.0
+initial_imitation_rate: 0.2
 
 # Эволюция
 reproduction_threshold: 35.0
@@ -50,25 +49,33 @@ max_steps: 500
 seed: 42
 
 # === СОЦИАЛЬНАЯ СЕТЬ (Пункт 3.1) ===
-network_type: "barabasi_albert" # Опции: "barabasi_albert" (scale-free), "watts_strogatz" (small-world), "random", "none"
-network_param_m: 3             # Число ребер, прикрепляемых к новому узлу (для BA)
-network_param_k: 4             # Число ближайших соседей (для WS, должно быть четным)
-network_param_p: 0.1           # Вероятность переподключения (для WS) / плотность (для random)
+network_type: "barabasi_albert"
+network_param_m: 3
+network_param_k: 4
+network_param_p: 0.1
 
 # === Производительность и устойчивость ===
-network_payoff_mode: "mean"       # mean | sum
-offspring_network_edges: 0        # 0 = автоматически по типу сети
-max_network_degree: 0             # 0 = без ограничения; можно задать вручную
-use_food_carrying_capacity: true  # экологическая ёмкость по ресурсу
-max_population: 3000                 # 0 = автоматически
-max_runtime_seconds: 0            # 0 = без ограничения по времени
+network_payoff_mode: "mean"
+offspring_network_edges: 0
+max_network_degree: 0
+use_food_carrying_capacity: true
+max_population: 3000
+max_runtime_seconds: 0
 
 # Многоуровневый отбор (Пункт 1.6)
 group_selection_enabled: true
 num_groups: 10
-group_selection_intensity: 0.3  # Вес группового фитнеса (alpha)
-group_migration_rate: 0.02      # Вероятность смены группы при рождении
-group_competition_step: 50      # Каждые N шагов происходит конкуренция групп     
+group_selection_intensity: 0.3
+group_migration_rate: 0.02
+group_competition_step: 50
 
 # === ТОРГОВЛЯ (TRADE) - Пункт 2.1 ===
 trade_enabled: true
+
+# === ЗАГРЯЗНЕНИЕ / ИСТОЩЕНИЕ (Пункт 2.2) ===
+pollution_enabled: true
+pollution_production_rate: 0.15   # Отходы от сбора (harvest)
+pollution_consumption_rate: 0.25  # Отходы от метаболизма
+pollution_diffusion_rate: 0.20    # Диффузия к соседям
+pollution_decay_rate: 0.05        # Естественное разложение
+pollution_capacity_impact: 1.5    # Насколько 1 ед. отходов снижает capacity

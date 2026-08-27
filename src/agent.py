@@ -158,11 +158,8 @@ class EcoAgent(Agent):
 
     def metabolize(self):
         """
-        ИЗМЕНЕНИЕ: Метаболическая адаптация при голодании.
-        Биологическое обоснование: при дефиците ресурсов организмы
-        снижают базальный метаболизм (торпор, диапауза, снижение
-        активности щитовидной железы у млекопитающих).
-        При ресурсе < 3.0 метаболизм снижается до 60% от нормы.
+        ИЗМЕНЕНИЕ: Возвращает фактически потребленное количество ресурсов
+        для последующего расчета загрязнения (Пункт 2.2).
         """
         met_s = self.genome.metabolism_sugar
         met_sp = self.genome.metabolism_spice
@@ -175,6 +172,8 @@ class EcoAgent(Agent):
 
         self.sugar -= met_s
         self.spice -= met_sp
+        
+        return met_s, met_sp
 
     def can_reproduce(self):
         threshold = self.model.cfg.reproduction_threshold

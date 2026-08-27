@@ -54,6 +54,7 @@ def compute_stats(model):
         "Avg_Metabolism_Spice": sum_met_sp / n,
         "Avg_Imitation_Intensity": sum_intensity / n,
         "Avg_Imitation_Rate": sum_imitation_rate / n,
+        "Total_Pollution": model.env.total_pollution if getattr(model.cfg, "pollution_enabled", False) else 0.0,
     }
     for s, cnt in strat_counts.items(): stats[f"Freq_{s}"] = cnt / n
     for t in IMITATION_TYPES:
@@ -84,6 +85,7 @@ def _empty_stats():
         "Avg_Metabolism_Sugar": 0.0, "Avg_Metabolism_Spice": 0.0,
         "Avg_Imitation_Intensity": 0.0, "Avg_Imitation_Rate": 0.0,
         "Alive_Groups": 1, "Group_Fitness_Variance": 0.0,
+        "Total_Pollution": 0.0,
     }
     for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]: stats[f"Freq_{s}"] = 0.0
     for t in IMITATION_TYPES:
@@ -116,6 +118,11 @@ class AgentsModel(Model):
             catastrophe_duration=self.cfg.catastrophe_duration,
             catastrophe_severity=self.cfg.catastrophe_severity,
             rng=self.rng,
+            # Pollution params (Пункт 2.2)
+            pollution_enabled=getattr(self.cfg, "pollution_enabled", True),
+            pollution_diffusion_rate=getattr(self.cfg, "pollution_diffusion_rate", 0.2),
+            pollution_decay_rate=getattr(self.cfg, "pollution_decay_rate", 0.05),
+            pollution_capacity_impact=getattr(self.cfg, "pollution_capacity_impact", 1.5),
         )
 
         self._neighborhood_cache = {}
@@ -157,6 +164,7 @@ class AgentsModel(Model):
             "Population": lambda m: m._stats["Population"],
             "Total_Env_Sugar": lambda m: m.env.total_sugar,
             "Total_Env_Spice": lambda m: m.env.total_spice,
+            "Total_Pollution": lambda m: m._stats["Total_Pollution"],
             "Season_Phase": lambda m: m.env.season_phase,
             "Catastrophe_Active": lambda m: 1 if m.env.catastrophe_active else 0,
             "Freq_Cooperators": lambda m: m._stats["Freq_Cooperators"],
@@ -201,13 +209,6 @@ class AgentsModel(Model):
         return G
 
     def _interact_network(self, agents):
-        """
-        ИЗМЕНЕНИЕ: Игровой выигрыш распределяется в ОБА ресурса
-        пропорционально метаболизму (50/50 при равном метаболизме).
-        Обоснование: в реальных экосистемах выгода от кооперации
-        (совместная охота, взаимная защита) конвертируется в разные
-        виды ресурсов, а не в один.
-        """
         game = self.cfg.game
         memory_size = getattr(self.cfg, "memory_size", 10)
         self._slot_to_agent = {a.network_slot: a for a in agents}
@@ -252,7 +253,6 @@ class AgentsModel(Model):
                 a.last_payoff = 0.0
                 a.last_cell_coop_rate = 1.0
 
-            # === КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: распределение выигрыша в оба ресурса ===
             m_s = a.genome.metabolism_sugar
             m_sp = a.genome.metabolism_spice
             m_total = m_s + m_sp
@@ -296,7 +296,14 @@ class AgentsModel(Model):
             agent.age += 1
             agent.perceive_and_move()
 
-        self._harvest_cells(active_agents)
+        pollution_enabled = getattr(self.cfg, "pollution_enabled", True)
+        prod_rate = getattr(self.cfg, "pollution_production_rate", 0.15)
+        cons_rate = getattr(self.cfg, "pollution_consumption_rate", 0.25)
+        
+        # Сетка для накопления отходов за текущий шаг
+        pollution_grid = np.zeros((self.cfg.height, self.cfg.width))
+
+        self._harvest_cells(active_agents, pollution_grid, prod_rate)
 
         if getattr(self.cfg, "network_type", "none") != "none" and self.social_network is not None:
             self._interact_network(active_agents)
@@ -316,11 +323,17 @@ class AgentsModel(Model):
                     avg_g = group_avg.get(a.group_id, a.last_payoff)
                     a.sugar += alpha * (avg_g - a.last_payoff)
 
-        # === ШАГ ТОРГОВЛИ (Пункт 2.1) ===
         if getattr(self.cfg, "trade_enabled", False):
             self._trade_step(active_agents)
 
-        for agent in active_agents: agent.metabolize()
+        for agent in active_agents: 
+            met_s, met_sp = agent.metabolize()
+            if pollution_enabled:
+                x, y = agent.pos
+                pollution_grid[y, x] += (met_s + met_sp) * cons_rate
+                
+        if pollution_enabled:
+            self.env.add_pollution(pollution_grid)
 
         if getattr(self.cfg, "group_selection_enabled", False):
             comp_step = getattr(self.cfg, "group_competition_step", 50)
@@ -333,12 +346,6 @@ class AgentsModel(Model):
         self.steps_run += 1
 
     def _trade_step(self, agents):
-        """
-        ИЗМЕНЕНИЕ: Каждый агент может совершить до 2 сделок за шаг
-        (было 1). Это повышает эффективность перераспределения ресурсов.
-        Обоснование: в реальных экономиках агенты совершают множество
-        обменов за период (Gintis, 2000).
-        """
         use_network = (getattr(self.cfg, "network_type", "none") != "none"
                        and self.social_network is not None)
         traded_pairs = set()
@@ -405,14 +412,7 @@ class AgentsModel(Model):
                     neighbors.extend([a for a in cell_agents if isinstance(a, EcoAgent)])
             agent.try_imitate(neighbors)
 
-    def _harvest_cells(self, agents):
-        """
-        ИЗМЕНЕНИЕ: Множитель сбора увеличен с 2.0 до 3.0.
-        Обоснование: в модели агенты собирают ресурс
-        пропорционально потребностям. Коэффициент 3.0
-        позволяет агенту не только покрыть метаболизм, но и накопить
-        резерв для выживания в неблагоприятные сезоны.
-        """
+    def _harvest_cells(self, agents, pollution_grid, prod_rate):
         by_cell = {}
         for agent in agents:
             by_cell.setdefault(agent.pos, []).append(agent)
@@ -433,30 +433,33 @@ class AgentsModel(Model):
 
             if total_demand_sugar > 0 and avail_sugar > 0:
                 if total_demand_sugar <= avail_sugar:
+                    harvested_s = total_demand_sugar
                     for agent, demand in zip(cell_agents, demands_sugar):
                         agent.sugar += demand
                     env_sugar[y, x] -= total_demand_sugar
                 else:
+                    harvested_s = avail_sugar
                     scale = avail_sugar / total_demand_sugar
                     for agent, demand in zip(cell_agents, demands_sugar):
                         agent.sugar += demand * scale
                     env_sugar[y, x] = 0.0
+                pollution_grid[y, x] += harvested_s * prod_rate
 
             if total_demand_spice > 0 and avail_spice > 0:
                 if total_demand_spice <= avail_spice:
+                    harvested_sp = total_demand_spice
                     for agent, demand in zip(cell_agents, demands_spice):
                         agent.spice += demand
                     env_spice[y, x] -= total_demand_spice
                 else:
+                    harvested_sp = avail_spice
                     scale = avail_spice / total_demand_spice
                     for agent, demand in zip(cell_agents, demands_spice):
                         agent.spice += demand * scale
                     env_spice[y, x] = 0.0
+                pollution_grid[y, x] += harvested_sp * prod_rate
 
     def _interact_cells_aggregated(self, agents):
-        """
-        ИЗМЕНЕНИЕ: Аналогично _interact_network — выигрыш в оба ресурса.
-        """
         by_cell = {}
         for agent in agents:
             by_cell.setdefault(agent.pos, []).append(agent)
@@ -485,7 +488,6 @@ class AgentsModel(Model):
                 action = actions[a.unique_id]
                 payoff = c_payoff if action == "C" else d_payoff
 
-                # Распределение в оба ресурса
                 m_s = a.genome.metabolism_sugar
                 m_sp = a.genome.metabolism_spice
                 m_total = m_s + m_sp

@@ -1,7 +1,6 @@
 from dataclasses import dataclass, fields
 import yaml
 
-
 @dataclass
 class GamePayoffs:
     R: float
@@ -18,61 +17,43 @@ class GamePayoffs:
         }
         return table[(my_action, other_action)]
 
-
 @dataclass
 class Config:
     # =========================================================
     # Сначала обязательные поля без значений по умолчанию
     # =========================================================
-
     width: int
     height: int
     max_resource: float
     regen_rate: float
-
     season_period: int
-
     min_vision: int
     max_vision: int
-
     min_metabolism: float
     max_metabolism: float
-
     initial_resource: float
-
     max_age: int
     memory_size: int
-
     reproduction_threshold: float
     mutation_rate: float
-
     R: float
     S: float
     T: float
     P: float
-
     max_steps: int
     seed: int
 
     # =========================================================
-    # Поля, которых может не быть в config.yaml,
-    # поэтому даём им значения по умолчанию
+    # Поля, которых может не быть в config.yaml
     # =========================================================
-
     initial_agents: int = 100
-
     season_amplitude: float = 0.0
     catastrophe_prob: float = 0.0
     catastrophe_duration: int = 0
     catastrophe_severity: float = 0.0
 
-    # =========================================================
-    # Все остальные необязательные параметры
-    # =========================================================
-
     max_spice: float = 4.0
     regen_rate_spice: float = 1.0
-
     min_metabolism_spice: float = 1.0
     max_metabolism_spice: float = 4.0
     initial_spice: float = 15.0
@@ -102,10 +83,17 @@ class Config:
 
     trade_enabled: bool = True
 
+    # === ЗАГРЯЗНЕНИЕ / ИСТОЩЕНИЕ (Пункт 2.2) ===
+    pollution_enabled: bool = True
+    pollution_production_rate: float = 0.15
+    pollution_consumption_rate: float = 0.25
+    pollution_diffusion_rate: float = 0.20
+    pollution_decay_rate: float = 0.05
+    pollution_capacity_impact: float = 1.5
+
     # =========================================================
     # Свойства
     # =========================================================
-
     @property
     def game(self) -> GamePayoffs:
         return GamePayoffs(self.R, self.S, self.T, self.P)
@@ -118,37 +106,28 @@ class Config:
     def target_offspring_edges(self) -> int:
         if self.offspring_network_edges > 0:
             return max(1, int(self.offspring_network_edges))
-
         if self.network_type == "barabasi_albert":
             return max(1, int(2 * self.network_param_m))
-
         if self.network_type == "watts_strogatz":
             return max(1, int(self.network_param_k))
-
         if self.network_type == "random":
             expected_degree = self.network_param_p * self.initial_agents
             return max(1, int(round(expected_degree)))
-
         return max(1, int(self.network_param_m))
 
     @property
     def population_capacity(self) -> int:
         if self.max_population > 0:
             return int(self.max_population)
-
         if not self.use_food_carrying_capacity:
             return 10**9
-
         if self.min_metabolism <= 0:
             return 10**9
-
         if self.regen_rate > 0:
             energy_flow = self.width * self.height * self.regen_rate
         else:
             energy_flow = self.width * self.height * self.max_resource
-
         return max(1, int(energy_flow / self.min_metabolism))
-
 
 def load_config(path: str = "config.yaml") -> Config:
     with open(path, "r", encoding="utf-8") as f:

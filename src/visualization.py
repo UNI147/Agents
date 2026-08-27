@@ -55,14 +55,22 @@ def plot_results(df: pd.DataFrame, save_path=None):
     ax4.set_title('💰 Средний ресурс (Sugar+Spice) по типам имитаторов', fontsize=12, fontweight='bold')
     ax4.set_xlabel('Шаг'); ax4.set_ylabel('Средний ресурс'); ax4.legend(fontsize=8)
 
-    # === 5. СРЕДА (SUGAR + SPICE) ===
+    # === 5. СРЕДА (SUGAR + SPICE) + ЗАГРЯЗНЕНИЕ (Пункт 2.2) ===
     ax5 = fig.add_subplot(gs[2, 0])
     if 'Total_Env_Sugar' in df.columns:
         ax5.plot(df['Step'], df['Total_Env_Sugar'], color='orange', linewidth=1.2, label='Sugar')
     if 'Total_Env_Spice' in df.columns:
         ax5.plot(df['Step'], df['Total_Env_Spice'], color='purple', linewidth=1.2, label='Spice')
-    ax5.set_title('Суммарный ресурс среды (Sugar & Spice)', fontsize=12, fontweight='bold')
-    ax5.set_xlabel('Шаг'); ax5.legend(fontsize=8)
+    
+    if 'Total_Pollution' in df.columns and df['Total_Pollution'].max() > 0:
+        ax5_p = ax5.twinx()
+        ax5_p.plot(df['Step'], df['Total_Pollution'], color='black', linestyle='--', linewidth=1.5, label='Загрязнение')
+        ax5_p.set_ylabel('Загрязнение (отходы)', color='black')
+        ax5_p.tick_params(axis='y', labelcolor='black')
+        ax5_p.legend(loc='upper right', fontsize=8)
+        
+    ax5.set_title('Суммарный ресурс среды и Загрязнение', fontsize=12, fontweight='bold')
+    ax5.set_xlabel('Шаг'); ax5.legend(fontsize=8, loc='upper left')
     for i, active in enumerate(df.get('Catastrophe_Active', [])):
         if active: ax5.axvspan(df['Step'].iloc[i], df['Step'].iloc[i] + 1, color='red', alpha=0.15)
 
