@@ -103,6 +103,10 @@ class Config:
     resource_peaks_drift_speed: float = 1.0
     resource_peaks_mutation_prob: float = 0.05
 
+    # === КУЛЬТУРНАЯ ПЕРЕДАЧА (Пункт 4.4) ===
+    tag_flipping_enabled: bool = True
+    tag_length: int = 11
+
     # =========================================================
     # Свойства
     # =========================================================

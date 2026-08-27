@@ -76,6 +76,11 @@ class EcoAgent(Agent):
         self.imitation_attempts = 0
         self.imitation_successes = 0
         self.strategy_changes = 0
+
+        # === КУЛЬТУРНЫЕ ТЕГИ (Пункт 4.4: Tag-flipping) ===
+        tag_length = getattr(self.model.cfg, 'tag_length', 11)
+        # Инициализируются случайным образом при рождении
+        self.cultural_tags = [int(self.model.rng.integers(0, 2)) for _ in range(tag_length)]
         
         # === ПСИХОЛОГИЯ: Врожденные склонности (Природа) ===
         # Агент рождается не "чистым листом", а с генетическими предпосылками
@@ -92,6 +97,14 @@ class EcoAgent(Agent):
         self.propensities = {"C": base_c, "D": base_d}
 
         self.home_island = 0 # Устанавливается моделью при спавне
+
+    @property
+    def cultural_group(self):
+        """Определение культурной группы (Red/Blue) по большинству тегов (Эпштейн)."""
+        if sum(self.cultural_tags) > len(self.cultural_tags) / 2:
+            return "Red"
+        else:
+            return "Blue"
 
     @property
     def accumulated_payoff(self):
@@ -254,6 +267,10 @@ class EcoAgent(Agent):
         child = EcoAgent(self.model, genome=child_genome)
         child.sugar = child_sugar
         child.spice = child_spice
+        # === ВЕРТИКАЛЬНАЯ КУЛЬТУРНАЯ ПЕРЕДАЧА (без генетического наследования) ===
+        # Ребенок наследует культурные теги родителя "как есть" (без биологических мутаций).
+        # В дальнейшем теги могут измениться только горизонтально через Tag-flipping.
+        child.cultural_tags = self.cultural_tags[:] 
         return child
 
     def trade(self, other):

@@ -10,17 +10,18 @@ from .managers import (
     InteractionManager,
     TradeManager,
     ImitationManager,
-    EvolutionManager
+    EvolutionManager,
+    CulturalManager
 )
 
 def compute_stats(model):
     n = len(model.agents)
-    if n == 0: return _empty_stats()
+    if n == 0:
+        return _empty_stats()
 
     sum_sugar = sum_spice = sum_vis = 0.0
     sum_met_s = sum_met_sp = 0.0
-    sum_propensity_c = 0.0  # Накопитель реальной склонности к кооперации
-    
+    sum_propensity_c = 0.0
     strat_counts = {s: 0 for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]}
     imit_type_counts = {t: 0 for t in IMITATION_TYPES}
     imit_type_payoff = {t: 0.0 for t in IMITATION_TYPES}
@@ -34,6 +35,11 @@ def compute_stats(model):
     sum_prop_c = 0.0
     sum_prop_d = 0.0
 
+    # === инициализация переменных культурной статистики ===
+    red_count = 0
+    blue_count = 0
+    tag_diversity_sum = 0.0
+
     for a in model.agents:
         sum_sugar += a.sugar
         sum_spice += a.spice
@@ -43,10 +49,10 @@ def compute_stats(model):
         sum_intensity += a.genome.imitation_intensity
         sum_imitation_rate += a.genome.imitation_rate
 
-        # Защита от TypeError (если стратегия вдруг стала не строкой)
         strat = a.genome.strategy if isinstance(a.genome.strategy, str) else "Unknown"
-        if strat in strat_counts: strat_counts[strat] += 1
-            
+        if strat in strat_counts:
+            strat_counts[strat] += 1
+
         # === СТАТИСТИКА ОБУЧЕННОГО ПОВЕДЕНИЯ (Roth-Erev) ===
         total_prop = a.propensities["C"] + a.propensities["D"]
         p_c = a.propensities["C"] / total_prop if total_prop > 0 else 0.5
@@ -54,17 +60,14 @@ def compute_stats(model):
 
         itype = a.genome.imitation_type
         imit_type_counts[itype] += 1
-        # Считаем средний накопленный выигрыш (K шагов), а не last_payoff
-        imit_type_payoff[itype] += a.accumulated_payoff 
+        imit_type_payoff[itype] += a.accumulated_payoff
         imit_type_resource[itype] += (a.sugar + a.spice)
         imit_type_attempts[itype] += getattr(a, "imitation_attempts", 0)
         imit_type_successes[itype] += getattr(a, "imitation_successes", 0)
 
-        # Собираем гены психики
         sum_learning_rate += a.genome.learning_rate
         sum_exploration_rate += a.genome.exploration_rate
-        
-        # Собираем реальные склонности (propensities) для графика обучения
+
         total_prop = a.propensities["C"] + a.propensities["D"]
         if total_prop > 0:
             sum_prop_c += a.propensities["C"] / total_prop
@@ -73,19 +76,33 @@ def compute_stats(model):
             sum_prop_c += 0.5
             sum_prop_d += 0.5
 
-    # Реальная частота кооператоров теперь основана на выученном поведении
+        # Статистика культурных групп (Red/Blue)
+        if getattr(a, 'cultural_group', 'Blue') == 'Red':
+            red_count += 1
+        else:
+            blue_count += 1
+        tag_diversity_sum += sum(a.cultural_tags)
+
+    # Реальная частота кооператоров
     n_action_c = sum(1 for a in model.agents if getattr(a, "last_action", "C") == "C")
-    
+
     stats = {
-        "Population": n, 
-        "Freq_Cooperators": sum_propensity_c / n, # Реальная частота кооперации
+        "Population": n,
+        "Freq_Cooperators": sum_propensity_c / n,
         "Freq_Action_C": n_action_c / n,
-        "Avg_Sugar": sum_sugar / n, "Avg_Spice": sum_spice / n, "Avg_Vision": sum_vis / n,
-        "Avg_Metabolism_Sugar": sum_met_s / n, "Avg_Metabolism_Spice": sum_met_sp / n,
-        "Avg_Imitation_Intensity": sum_intensity / n, "Avg_Imitation_Rate": sum_imitation_rate / n,
+        "Avg_Sugar": sum_sugar / n,
+        "Avg_Spice": sum_spice / n,
+        "Avg_Vision": sum_vis / n,
+        "Avg_Metabolism_Sugar": sum_met_s / n,
+        "Avg_Metabolism_Spice": sum_met_sp / n,
+        "Avg_Imitation_Intensity": sum_intensity / n,
+        "Avg_Imitation_Rate": sum_imitation_rate / n,
         "Total_Pollution": model.env.total_pollution if model.cfg.pollution_enabled else 0.0,
     }
-    for s, cnt in strat_counts.items(): stats[f"Freq_{s}"] = cnt / n
+
+    for s, cnt in strat_counts.items():
+        stats[f"Freq_{s}"] = cnt / n
+
     for t in IMITATION_TYPES:
         stats[f"ImitFreq_{t}"] = imit_type_counts[t] / n
         stats[f"ImitAvgPayoff_{t}"] = imit_type_payoff[t] / imit_type_counts[t] if imit_type_counts[t] > 0 else 0.0
@@ -95,12 +112,14 @@ def compute_stats(model):
 
     if model.cfg.group_selection_enabled:
         group_res = {}
-        for a in model.agents: group_res.setdefault(a.group_id, []).append(a.sugar + a.spice)
+        for a in model.agents:
+            group_res.setdefault(a.group_id, []).append(a.sugar + a.spice)
         stats["Alive_Groups"] = len(group_res)
         if len(group_res) > 1:
-            means = [sum(v)/len(v) for v in group_res.values()]
+            means = [sum(v) / len(v) for v in group_res.values()]
             stats["Group_Fitness_Variance"] = float(np.var(means))
-        else: stats["Group_Fitness_Variance"] = 0.0
+        else:
+            stats["Group_Fitness_Variance"] = 0.0
     else:
         stats["Alive_Groups"] = 1
         stats["Group_Fitness_Variance"] = 0.0
@@ -109,6 +128,10 @@ def compute_stats(model):
     stats["Avg_Exploration_Rate"] = sum_exploration_rate / n
     stats["Avg_Propensity_C"] = sum_prop_c / n
     stats["Avg_Propensity_D"] = sum_prop_d / n
+
+    stats["Freq_Red"] = red_count / n
+    stats["Freq_Blue"] = blue_count / n
+    stats["Avg_Tag_Diversity"] = (tag_diversity_sum / n) / getattr(model.cfg, 'tag_length', 11)
 
     return stats
 
@@ -131,6 +154,9 @@ def _empty_stats():
         "Avg_Exploration_Rate": 0.0,
         "Avg_Propensity_C": 0.5,
         "Avg_Propensity_D": 0.5,
+        "Freq_Red": 0.0,
+        "Freq_Blue": 0.0,
+        "Avg_Tag_Diversity": 0.0,
     }
     for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]:
         stats[f"Freq_{s}"] = 0.0
@@ -186,6 +212,7 @@ class AgentsModel(Model):
         self.trade_manager = TradeManager(self)
         self.imitation_manager = ImitationManager(self)
         self.evolution_manager = EvolutionManager(self)
+        self.cultural_manager = CulturalManager(self)
 
         self.max_slots = 0
         strategies = ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]
@@ -239,6 +266,9 @@ class AgentsModel(Model):
             "Avg_Exploration_Rate": lambda m: m._stats["Avg_Exploration_Rate"],
             "Avg_Propensity_C": lambda m: m._stats["Avg_Propensity_C"],
             "Avg_Propensity_D": lambda m: m._stats["Avg_Propensity_D"],
+            "Freq_Red": lambda m: m._stats["Freq_Red"],
+            "Freq_Blue": lambda m: m._stats["Freq_Blue"],
+            "Avg_Tag_Diversity": lambda m: m._stats["Avg_Tag_Diversity"],
         }
         for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]:
             reporters[f"Freq_{s}"] = lambda m, _s=s: m._stats[f"Freq_{_s}"]
@@ -280,6 +310,9 @@ class AgentsModel(Model):
             self.interaction_manager.interact_cells_aggregated(active_agents)
 
         self.imitation_manager.imitation_step(active_agents)
+
+        # === Пункт 4.4: Культурная передача (Tag-flipping) ===
+        self.cultural_manager.cultural_step(active_agents)
 
         if self.cfg.group_selection_enabled:
             alpha = self.cfg.group_selection_intensity

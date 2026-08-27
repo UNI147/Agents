@@ -15,8 +15,8 @@ IMITATION_COLORS = {
 }
 
 def plot_results(df: pd.DataFrame, save_path=None):
-    fig = plt.figure(figsize=(18, 18))
-    gs = fig.add_gridspec(4, 2, hspace=0.35, wspace=0.3)
+    fig = plt.figure(figsize=(18, 22))
+    gs = fig.add_gridspec(5, 2, hspace=0.35, wspace=0.3)
 
     # === 1. ПОПУЛЯЦИЯ + ГРУППЫ (Возвращено как было) ===
     ax1 = fig.add_subplot(gs[0, 0])
@@ -129,6 +129,23 @@ def plot_results(df: pd.DataFrame, save_path=None):
             ax8.legend(lines_8 + lines_8b, labels_8 + labels_8b, loc='best')
         else:
             ax8.legend(loc='best')
+
+    # === 9. КУЛЬТУРНЫЕ ГРУППЫ (Tag-flipping) ===
+    ax9 = fig.add_subplot(gs[4, 0])
+    if 'Freq_Red' in df.columns and 'Freq_Blue' in df.columns:
+        ax9.plot(df['Step'], df['Freq_Red'], label='Red (Культурная группа)', color='red', linewidth=1.5)
+        ax9.plot(df['Step'], df['Freq_Blue'], label='Blue (Культурная группа)', color='blue', linewidth=1.5)
+        ax9.set_ylim(0, 1.05)
+    ax9.set_title('🏷️ Культурная динамика (Tag-flipping)', fontsize=12, fontweight='bold')
+    ax9.legend(loc='best')
+
+    # === 10. РАЗНООБРАЗИЕ ТЕГОВ ===
+    ax10 = fig.add_subplot(gs[4, 1])
+    if 'Avg_Tag_Diversity' in df.columns:
+        ax10.plot(df['Step'], df['Avg_Tag_Diversity'], color='darkorange', linewidth=1.5, label='Средняя доля "1" в тегах')
+        ax10.set_ylim(0, 1.05)
+    ax10.set_title('🧬 Культурное разнообразие (Доля активных тегов)', fontsize=12, fontweight='bold')
+    ax10.legend(loc='best')
 
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
