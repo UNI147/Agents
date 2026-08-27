@@ -140,7 +140,7 @@ class EcoAgent(Agent):
         best_x, best_y = x, y
         best_welfare = self.welfare(
             self.sugar + env_sugar[y, x], self.spice + env_spice[y, x])
-        neighbors = self.model.get_neighborhood_cached(self.pos, vision)
+        neighbors = self.model.get_neighborhood_cells(self.pos, vision)
         for nx, ny in neighbors:
             welf = self.welfare(
                 self.sugar + env_sugar[ny, nx], self.spice + env_spice[ny, nx])
@@ -190,42 +190,67 @@ class EcoAgent(Agent):
     def trade(self, other):
         if not self.model.cfg.trade_enabled:
             return
-        mrs_self = self.calculate_mrs()
-        mrs_other = other.calculate_mrs()
+            
+        m1_b, m2_b = self.genome.metabolism_sugar, self.genome.metabolism_spice
+        m1_s, m2_s = other.genome.metabolism_sugar, other.genome.metabolism_spice
+        
+        # Избегаем деления на ноль и логарифмических ошибок
+        w1_b, w2_b = max(1e-6, self.sugar), max(1e-6, self.spice)
+        w1_s, w2_s = max(1e-6, other.sugar), max(1e-6, other.spice)
+        
+        mT_b = m1_b + m2_b
+        mT_s = m1_s + m2_s
+        
+        if mT_b <= 1e-6 or mT_s <= 1e-6:
+            return
+
+        # Быстрая проверка MRS для определения ролей (Buyer/Seller)
+        # MRS = (m1 * w2) / (m2 * w1)
+        mrs_self = (m1_b * w2_b) / (m2_b * w1_b) if m2_b > 1e-6 else float('inf')
+        mrs_other = (m1_s * w2_s) / (m2_s * w1_s) if m2_s > 1e-6 else float('inf')
+        
         if math.isinf(mrs_self) or math.isinf(mrs_other):
             return
         if math.isclose(mrs_self, mrs_other, rel_tol=1e-4):
             return
+            
+        # Buyer покупает sugar (w1), продает spice (w2)
         if mrs_self > mrs_other:
             buyer, seller = self, other
         else:
             buyer, seller = other, self
-        max_iter = 10
-        for _ in range(max_iter):
-            mrs_b = buyer.calculate_mrs()
-            mrs_s = seller.calculate_mrs()
-            if mrs_b <= mrs_s or math.isinf(mrs_b) or math.isinf(mrs_s):
-                break
-            p = math.sqrt(mrs_b * mrs_s)
-            if p >= 1.0:
-                dsugar = 1.0
-                dspice = p
-            else:
-                dsugar = 1.0 / p
-                dspice = 1.0
-            if buyer.spice < dspice or seller.sugar < dsugar:
-                break
-            w_b_old = buyer.welfare(buyer.sugar, buyer.spice)
-            w_s_old = seller.welfare(seller.sugar, seller.spice)
-            w_b_new = buyer.welfare(buyer.sugar + dsugar, buyer.spice - dspice)
-            w_s_new = seller.welfare(seller.sugar - dsugar, seller.spice + dspice)
-            if w_b_new > w_b_old and w_s_new > w_s_old:
-                buyer.sugar += dsugar
-                buyer.spice -= dspice
-                seller.sugar -= dsugar
-                seller.spice += dspice
-            else:
-                break
+            # Меняем местами переменные для формулы
+            m1_b, m2_b, mT_b, w1_b, w2_b = m1_s, m2_s, mT_s, w1_s, w2_s
+            m1_s, m2_s, mT_s, w1_s, w2_s = m1_b, m2_b, mT_b, w1_b, w2_b
+
+        # --- ТОЧНОЕ АНАЛИТИЧЕСКОЕ РЕШЕНИЕ (Кривая контрактов) ---
+        N = (m1_b * w2_b * m2_s * w1_s) - (m1_s * w2_s * m2_b * w1_b)
+        D = (m1_b * w2_b * mT_s) + (m1_s * w2_s * mT_b)
+        
+        if D <= 1e-9:
+            return
+            
+        delta_sugar = N / D
+        if delta_sugar <= 1e-6:
+            return
+            
+        delta_spice = (delta_sugar * m1_b * w2_b) / (m2_b * w1_b + mT_b * delta_sugar)
+        
+        # Проверка физических ограничений (нельзя продать больше, чем есть)
+        max_sugar = seller.sugar * 0.9999
+        max_spice = buyer.spice * 0.9999
+        
+        # Если упремся в границы запасов, масштабируем сделку пропорционально
+        if delta_sugar > max_sugar or delta_spice > max_spice:
+            scale = min(max_sugar / delta_sugar, max_spice / delta_spice)
+            delta_sugar *= scale
+            delta_spice *= scale
+            
+        # Применяем транзакцию
+        buyer.sugar += delta_sugar
+        buyer.spice -= delta_spice
+        seller.sugar -= delta_sugar
+        seller.spice += delta_spice
 
     def try_imitate(self, neighbors: list):
         itype = self.genome.imitation_type

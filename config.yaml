@@ -20,10 +20,10 @@ max_metabolism: 3.0
 # === ПАРАМЕТРЫ МЕТАБОЛИЗМА (SPICE) - Пункт 2.1 ===
 min_metabolism_spice: 1.0
 max_metabolism_spice: 4.0
-initial_resource: 20.0
-initial_spice: 20.0
+initial_resource: 30.48
+initial_spice: 30.48
 
-initial_agents: 75
+initial_agents: 80
 max_age: 300
 
 # Память (Пункт 1.2)

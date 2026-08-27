@@ -108,6 +108,14 @@ class AgentsModel(Model):
         except TypeError: super().__init__(seed=self._seed)
 
         self.grid = MultiGrid(self.cfg.width, self.cfg.height, torus=True)
+        self._neighborhood_offsets = {}
+        max_r = self.cfg.max_vision
+        for r in range(1, max_r + 1):
+            offsets = []
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    offsets.append((dx, dy))
+            self._neighborhood_offsets[r] = offsets
         self.env = DynamicEnvironment(
             width=self.cfg.width, height=self.cfg.height,
             max_resource=self.cfg.max_resource, regen_rate=self.cfg.regen_rate,
@@ -273,16 +281,19 @@ class AgentsModel(Model):
         self._network_neighbors_cache = network_neighbors
         self._network_neighbors_cache_step = self.steps_run
 
-    def get_neighborhood_cached(self, pos, radius):
-        key = (pos[0], pos[1], radius)
-        cached = self._neighborhood_cache.get(key)
-        if cached is not None: return cached
-        raw = self.grid.get_neighborhood(pos, moore=True, include_center=True, radius=radius)
-        seen = set(); unique = []
-        for cell in raw:
-            if cell not in seen: seen.add(cell); unique.append(cell)
-        self._neighborhood_cache[key] = unique
-        return unique
+    def get_neighborhood_cells(self, pos, radius):
+        """
+        Мгновенное получение соседей без утечек памяти.
+        Использует предвычисленные оффсеты и dict.fromkeys для быстрой уникализации.
+        """
+        x, y = pos
+        w, h = self.cfg.width, self.cfg.height
+        offsets = self._neighborhood_offsets.get(radius, [])
+        
+        # dict.fromkeys сохраняет порядок и убирает дубликаты на скорости C
+        return list(dict.fromkeys(
+            ((x + dx) % w, (y + dy) % h) for dx, dy in offsets
+        ))
 
     def step(self):
         self.env.step()
@@ -359,7 +370,7 @@ class AgentsModel(Model):
                     neighbors = [self._slot_to_agent[s] for s in neighbor_slots
                                  if s in self._slot_to_agent and self._slot_to_agent[s].alive]
                 else:
-                    neighbor_cells = self.get_neighborhood_cached(agent.pos, radius=1)
+                    neighbor_cells = self.get_neighborhood_cells(agent.pos, radius=1)
                     neighbors = []
                     for cell in neighbor_cells:
                         cell_agents = self.grid.get_cell_list_contents([cell])
@@ -407,7 +418,7 @@ class AgentsModel(Model):
                     neighbor_slots = list(self.social_network.neighbors(agent.network_slot))
                     neighbors = [self._slot_to_agent[s] for s in neighbor_slots if s in self._slot_to_agent]
             else:
-                neighbor_cells = self.get_neighborhood_cached(agent.pos, radius=1)
+                neighbor_cells = self.get_neighborhood_cells(agent.pos, radius=1)
                 neighbors = []
                 for cell in neighbor_cells:
                     cell_agents = self.grid.get_cell_list_contents([cell])
