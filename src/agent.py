@@ -25,28 +25,37 @@ class Genome:
     def mutate(self, rate, min_vision, max_vision, min_met_s, max_met_s,
                min_met_sp, max_met_sp, min_intensity, max_intensity, rng):
         g = replace(self)
-        if rng.random() < rate:
+        
+        # 1. ФИЗИЧЕСКИЕ ГЕНЫ (Базовая морфология мутирует стабильно)
+        if rng.random() < rate * 0.8:
             g.vision = int(np.clip(g.vision + rng.choice([-1, 1]), min_vision, max_vision))
+        if rng.random() < rate * 1.2:
+            g.metabolism_sugar = float(np.clip(g.metabolism_sugar + rng.uniform(-0.5, 0.5), min_met_s, max_met_s))
+        if rng.random() < rate * 1.2:
+            g.metabolism_spice = float(np.clip(g.metabolism_spice + rng.uniform(-0.5, 0.5), min_met_sp, max_met_sp))
         if rng.random() < rate:
-            g.metabolism_sugar = float(np.clip(
-                g.metabolism_sugar + rng.uniform(-0.5, 0.5), min_met_s, max_met_s))
-        if rng.random() < rate:
-            g.metabolism_spice = float(np.clip(
-                g.metabolism_spice + rng.uniform(-0.5, 0.5), min_met_sp, max_met_sp))
+            g.max_age = int(max(50, g.max_age + rng.integers(-20, 21)))
+            
+        # 2. ПСИХОЛОГИЧЕСКИЕ ГЕНЫ (Раньше были захардкожены!)
+        # Нервная пластичность эволюционирует быстрее, адаптируясь к среде
+        if rng.random() < rate * 1.5:
+            g.learning_rate = float(np.clip(g.learning_rate + rng.uniform(-0.5, 0.5), 0.1, 5.0))
+        if rng.random() < rate * 1.5:
+            g.propensity_decay = float(np.clip(g.propensity_decay + rng.uniform(-0.05, 0.05), 0.5, 1.0))
+        if rng.random() < rate * 1.5:
+            g.exploration_rate = float(np.clip(g.exploration_rate + rng.uniform(-0.02, 0.02), 0.0, 0.5))
+            
+        # 3. СОЦИАЛЬНЫЕ ГЕНЫ
         if rng.random() < rate:
             strategies = ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]
             g.strategy = rng.choice(strategies)
         if rng.random() < rate:
-            g.max_age = int(max(50, g.max_age + rng.integers(-20, 21)))
-        if rng.random() < rate:
             g.imitation_type = rng.choice(IMITATION_TYPES)
         if rng.random() < rate:
-            g.imitation_intensity = float(np.clip(
-                g.imitation_intensity + rng.uniform(-0.5, 0.5),
-                min_intensity, max_intensity))
+            g.imitation_intensity = float(np.clip(g.imitation_intensity + rng.uniform(-0.5, 0.5), min_intensity, max_intensity))
         if rng.random() < rate:
-            g.imitation_rate = float(np.clip(
-                g.imitation_rate + rng.uniform(-0.05, 0.05), 0.0, 1.0))
+            g.imitation_rate = float(np.clip(g.imitation_rate + rng.uniform(-0.05, 0.05), 0.0, 1.0))
+                
         return g
 
 class EcoAgent(Agent):
@@ -67,7 +76,20 @@ class EcoAgent(Agent):
         self.imitation_attempts = 0
         self.imitation_successes = 0
         self.strategy_changes = 0
-        self.propensities = {"C": 1.0, "D": 1.0}
+        
+        # === ПСИХОЛОГИЯ: Врожденные склонности (Природа) ===
+        # Агент рождается не "чистым листом", а с генетическими предпосылками
+        base_c, base_d = 1.0, 1.0
+        if genome.strategy == "AlwaysC":
+            base_c = 10.0
+        elif genome.strategy == "AlwaysD":
+            base_d = 10.0
+        elif genome.strategy == "GTFT":
+            base_c = 5.0
+        elif genome.strategy in ["TFT", "WSLS"]:
+            base_c, base_d = 3.0, 3.0
+            
+        self.propensities = {"C": base_c, "D": base_d}
 
     @property
     def accumulated_payoff(self):
@@ -103,14 +125,44 @@ class EcoAgent(Agent):
         return (m1 * w2) / (m2 * w1)
 
     def get_action(self, current_partners=None):
-        """Выбор действия на основе накопленных склонностей + шум."""
+        """Выбор действия: Врожденные инстинкты (генетика) + Обучение (Рот-Эрев) + Шум."""
         if self.model.rng.random() < self.genome.exploration_rate:
             return self.model.rng.choice(["C", "D"])
             
         total = self.propensities["C"] + self.propensities["D"]
-        if total <= 0: return self.model.rng.choice(["C", "D"])
-            
+        if total <= 0: total = 1e-6
         p_c = self.propensities["C"] / total
+        
+        # === ВРОЖДЕННЫЕ РЕФЛЕКСЫ (Влияние гена strategy) ===
+        strat = self.genome.strategy
+        if strat == "AlwaysC":
+            p_c = max(p_c, 0.9) # Сильная врожденная тяга к кооперации
+        elif strat == "AlwaysD":
+            p_c = min(p_c, 0.1) # Сильная врожденная тяга к предательству
+            
+        elif current_partners:
+            recent_defections = 0
+            for p in current_partners:
+                if p.unique_id != self.unique_id:
+                    info = self.partners.get(p.unique_id)
+                    if info and info["last_action"] == "D":
+                        recent_defections += 1
+            
+            if strat == "TFT":
+                if recent_defections > 0:
+                    p_c *= 0.3 # Инстинкт мести
+            elif strat == "GTFT":
+                if recent_defections > 0:
+                    if self.model.rng.random() > 0.3: 
+                        p_c *= 0.3 # Великодушие (30% шанс простить)
+            elif strat == "WSLS":
+                # Win-Stay, Lose-Shift: врожденная реакция на прошлый проигрыш
+                if self.last_action == "C" and self.last_payoff < self.model.cfg.game.S + 0.5:
+                    p_c *= 0.2 # Получили "Sucker's payoff", сдвигаемся к D
+                elif self.last_action == "D" and self.last_payoff < self.model.cfg.game.P + 0.5:
+                    p_c = min(1.0, p_c + 0.5) # Оба предали (P), сдвигаемся к C
+
+        p_c = max(0.01, min(0.99, p_c))
         return "C" if self.model.rng.random() < p_c else "D"
 
     def update_learning(self, action_played, payoff):
@@ -164,15 +216,15 @@ class EcoAgent(Agent):
         if self.spice < 3.0: met_sp *= 0.6
 
         # === БИОЛОГИЧЕСКИЕ ЗАТРАТЫ НА ПОДДЕРЖАНИЕ ОРГАНОВ И МОЗГА ===
-        # 1. Зрение требует энергии (больше радиус = выше стоимость)
         vision_cost = 0.1 * self.genome.vision
-        
-        # 2. Нервная ткань (память о социальных партнерах) требует энергии
         memory_cost = 0.1 * len(self.partners)
-
-        # Итоговые затраты распределяются между sugar и spice
+        
+        # ЭВОЛЮЦИОННЫЙ КОМПРОМИСС: Высокая скорость обучения (нейропластичность) 
+        # требует сложных нейромедиаторов (spice). 
+        neural_cost = 0.15 * self.genome.learning_rate
+        
         total_met_s = met_s + vision_cost + memory_cost
-        total_met_sp = met_sp + (vision_cost + memory_cost) * 0.5
+        total_met_sp = met_sp + (vision_cost + memory_cost) * 0.5 + neural_cost
 
         self.sugar -= total_met_s
         self.spice -= total_met_sp

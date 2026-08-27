@@ -29,6 +29,10 @@ def compute_stats(model):
     imit_type_successes = {t: 0 for t in IMITATION_TYPES}
     sum_intensity = 0.0
     sum_imitation_rate = 0.0
+    sum_learning_rate = 0.0
+    sum_exploration_rate = 0.0
+    sum_prop_c = 0.0
+    sum_prop_d = 0.0
 
     for a in model.agents:
         sum_sugar += a.sugar
@@ -55,6 +59,19 @@ def compute_stats(model):
         imit_type_resource[itype] += (a.sugar + a.spice)
         imit_type_attempts[itype] += getattr(a, "imitation_attempts", 0)
         imit_type_successes[itype] += getattr(a, "imitation_successes", 0)
+
+        # Собираем гены психики
+        sum_learning_rate += a.genome.learning_rate
+        sum_exploration_rate += a.genome.exploration_rate
+        
+        # Собираем реальные склонности (propensities) для графика обучения
+        total_prop = a.propensities["C"] + a.propensities["D"]
+        if total_prop > 0:
+            sum_prop_c += a.propensities["C"] / total_prop
+            sum_prop_d += a.propensities["D"] / total_prop
+        else:
+            sum_prop_c += 0.5
+            sum_prop_d += 0.5
 
     # Реальная частота кооператоров теперь основана на выученном поведении
     n_action_c = sum(1 for a in model.agents if getattr(a, "last_action", "C") == "C")
@@ -88,6 +105,11 @@ def compute_stats(model):
         stats["Alive_Groups"] = 1
         stats["Group_Fitness_Variance"] = 0.0
 
+    stats["Avg_Learning_Rate"] = sum_learning_rate / n
+    stats["Avg_Exploration_Rate"] = sum_exploration_rate / n
+    stats["Avg_Propensity_C"] = sum_prop_c / n
+    stats["Avg_Propensity_D"] = sum_prop_d / n
+
     return stats
 
 def _empty_stats():
@@ -105,6 +127,10 @@ def _empty_stats():
         "Alive_Groups": 1,
         "Group_Fitness_Variance": 0.0,
         "Total_Pollution": 0.0,
+        "Avg_Learning_Rate": 0.0,
+        "Avg_Exploration_Rate": 0.0,
+        "Avg_Propensity_C": 0.5,
+        "Avg_Propensity_D": 0.5,
     }
     for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]:
         stats[f"Freq_{s}"] = 0.0
@@ -202,6 +228,10 @@ class AgentsModel(Model):
             "Avg_Imitation_Rate": lambda m: m._stats["Avg_Imitation_Rate"],
             "Alive_Groups": lambda m: m._stats["Alive_Groups"],
             "Group_Fitness_Variance": lambda m: m._stats["Group_Fitness_Variance"],
+            "Avg_Learning_Rate": lambda m: m._stats["Avg_Learning_Rate"],
+            "Avg_Exploration_Rate": lambda m: m._stats["Avg_Exploration_Rate"],
+            "Avg_Propensity_C": lambda m: m._stats["Avg_Propensity_C"],
+            "Avg_Propensity_D": lambda m: m._stats["Avg_Propensity_D"],
         }
         for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]:
             reporters[f"Freq_{s}"] = lambda m, _s=s: m._stats[f"Freq_{_s}"]
