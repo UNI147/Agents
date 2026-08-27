@@ -44,7 +44,6 @@ class Genome:
                 g.imitation_rate + rng.uniform(-0.05, 0.05), 0.0, 1.0))
         return g
 
-
 class EcoAgent(Agent):
     def __init__(self, model, genome, group_id=0):
         super().__init__(model)
@@ -57,7 +56,7 @@ class EcoAgent(Agent):
         self.last_payoff = 0.0
         self.last_cell_coop_rate = 1.0
         self.network_slot = None
-        memory_size = getattr(self.model.cfg, "memory_size", 10)
+        memory_size = self.model.cfg.memory_size
         self.partners = {}
         self.interaction_history = deque(maxlen=memory_size)
         self.imitation_attempts = 0
@@ -66,11 +65,6 @@ class EcoAgent(Agent):
 
     @property
     def alive(self):
-        """
-        ИЗМЕНЕНИЕ: Допускаем нулевой ресурс как "голодание" с порогом -1.0.
-        Это моделирует биологический механизм: организм погибает не мгновенно
-        при нулевом запасе, а после истощения резервов (жира, гликогена).
-        """
         return (self.sugar > -1.0 and self.spice > -1.0
                 and self.age < self.genome.max_age)
 
@@ -157,14 +151,9 @@ class EcoAgent(Agent):
             self.model.grid.move_agent(self, (best_x, best_y))
 
     def metabolize(self):
-        """
-        ИЗМЕНЕНИЕ: Возвращает фактически потребленное количество ресурсов
-        для последующего расчета загрязнения (Пункт 2.2).
-        """
         met_s = self.genome.metabolism_sugar
         met_sp = self.genome.metabolism_spice
 
-        # Адаптивное снижение метаболизма при голодании
         if self.sugar < 3.0:
             met_s *= 0.6
         if self.spice < 3.0:
@@ -199,7 +188,7 @@ class EcoAgent(Agent):
         return child
 
     def trade(self, other):
-        if not getattr(self.model.cfg, "trade_enabled", False):
+        if not self.model.cfg.trade_enabled:
             return
         mrs_self = self.calculate_mrs()
         mrs_other = other.calculate_mrs()
@@ -271,8 +260,7 @@ class EcoAgent(Agent):
 
     def _imitate_pairwise_difference(self, others):
         observed = self.model.rng.choice(others)
-        max_diff = getattr(self.model.cfg, "max_payoff_difference",
-                           self.model.cfg.game.T - self.model.cfg.game.P)
+        max_diff = self.model.cfg.max_payoff_difference
         if max_diff <= 0:
             return None
         payoff_diff = observed.last_payoff - self.last_payoff

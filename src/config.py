@@ -20,7 +20,7 @@ class GamePayoffs:
 @dataclass
 class Config:
     # =========================================================
-    # Сначала обязательные поля без значений по умолчанию
+    # Обязательные поля (без значений по умолчанию)
     # =========================================================
     width: int
     height: int
@@ -44,7 +44,7 @@ class Config:
     seed: int
 
     # =========================================================
-    # Поля, которых может не быть в config.yaml
+    # Опциональные поля (есть значения по умолчанию)
     # =========================================================
     initial_agents: int = 100
     season_amplitude: float = 0.0
@@ -81,7 +81,10 @@ class Config:
     group_migration_rate: float = 0.02
     group_competition_step: int = 50
 
+    # === ТОРГОВЛЯ И СБОР (TRADE & HARVEST) - Пункт 2.1 ===
     trade_enabled: bool = True
+    max_trades_per_step: int = 2
+    harvest_multiplier: float = 3.0
 
     # === ЗАГРЯЗНЕНИЕ / ИСТОЩЕНИЕ (Пункт 2.2) ===
     pollution_enabled: bool = True

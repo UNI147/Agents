@@ -54,7 +54,7 @@ def compute_stats(model):
         "Avg_Metabolism_Spice": sum_met_sp / n,
         "Avg_Imitation_Intensity": sum_intensity / n,
         "Avg_Imitation_Rate": sum_imitation_rate / n,
-        "Total_Pollution": model.env.total_pollution if getattr(model.cfg, "pollution_enabled", False) else 0.0,
+        "Total_Pollution": model.env.total_pollution if model.cfg.pollution_enabled else 0.0,
     }
     for s, cnt in strat_counts.items(): stats[f"Freq_{s}"] = cnt / n
     for t in IMITATION_TYPES:
@@ -64,7 +64,7 @@ def compute_stats(model):
         attempts = imit_type_attempts[t]
         stats[f"ImitSuccessRate_{t}"] = imit_type_successes[t] / attempts if attempts > 0 else 0.0
 
-    if getattr(model.cfg, "group_selection_enabled", False):
+    if model.cfg.group_selection_enabled:
         group_res = {}
         for a in model.agents: group_res.setdefault(a.group_id, []).append(a.sugar + a.spice)
         stats["Alive_Groups"] = len(group_res)
@@ -101,7 +101,7 @@ class AgentsModel(Model):
         if "cfg" in kwargs and isinstance(kwargs["cfg"], Config): self.cfg = kwargs["cfg"]
         else: self.cfg = Config(**kwargs)
 
-        self._seed = seed if seed is not None else getattr(self.cfg, "seed", 42)
+        self._seed = seed if seed is not None else self.cfg.seed
         self.rng = np.random.default_rng(self._seed)
 
         try: super().__init__(rng=self._seed)
@@ -118,11 +118,10 @@ class AgentsModel(Model):
             catastrophe_duration=self.cfg.catastrophe_duration,
             catastrophe_severity=self.cfg.catastrophe_severity,
             rng=self.rng,
-            # Pollution params (Пункт 2.2)
-            pollution_enabled=getattr(self.cfg, "pollution_enabled", True),
-            pollution_diffusion_rate=getattr(self.cfg, "pollution_diffusion_rate", 0.2),
-            pollution_decay_rate=getattr(self.cfg, "pollution_decay_rate", 0.05),
-            pollution_capacity_impact=getattr(self.cfg, "pollution_capacity_impact", 1.5),
+            pollution_enabled=self.cfg.pollution_enabled,
+            pollution_diffusion_rate=self.cfg.pollution_diffusion_rate,
+            pollution_decay_rate=self.cfg.pollution_decay_rate,
+            pollution_capacity_impact=self.cfg.pollution_capacity_impact,
         )
 
         self._neighborhood_cache = {}
@@ -130,8 +129,8 @@ class AgentsModel(Model):
         self._slot_to_agent = {}
         
         strategies = ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]
-        num_groups = getattr(self.cfg, "num_groups", 10)
-        gs_enabled = getattr(self.cfg, "group_selection_enabled", False)
+        num_groups = self.cfg.num_groups
+        gs_enabled = self.cfg.group_selection_enabled
         
         for i in range(self.cfg.initial_agents):
             genome = Genome(
@@ -194,25 +193,25 @@ class AgentsModel(Model):
 
     def _build_social_network(self):
         n = self.max_slots
-        net_type = getattr(self.cfg, "network_type", "none")
+        net_type = self.cfg.network_type
         if net_type == "none" or n <= 1: return None
         if net_type == "barabasi_albert":
-            m = max(1, min(getattr(self.cfg, "network_param_m", 3), n - 1))
+            m = max(1, min(self.cfg.network_param_m, n - 1))
             G = nx.barabasi_albert_graph(n, m, seed=self._seed)
         elif net_type == "watts_strogatz":
-            k = max(2, min(getattr(self.cfg, "network_param_k", 4), n - 1))
+            k = max(2, min(self.cfg.network_param_k, n - 1))
             if k % 2 != 0: k += 1
-            G = nx.watts_strogatz_graph(n, k, getattr(self.cfg, "network_param_p", 0.1), seed=self._seed)
+            G = nx.watts_strogatz_graph(n, k, self.cfg.network_param_p, seed=self._seed)
         elif net_type == "random":
-            G = nx.erdos_renyi_graph(n, getattr(self.cfg, "network_param_p", 0.1), seed=self._seed)
+            G = nx.erdos_renyi_graph(n, self.cfg.network_param_p, seed=self._seed)
         else: return None
         return G
 
     def _interact_network(self, agents):
         game = self.cfg.game
-        memory_size = getattr(self.cfg, "memory_size", 10)
+        memory_size = self.cfg.memory_size
         self._slot_to_agent = {a.network_slot: a for a in agents}
-        mean_mode = getattr(self.cfg, "network_payoff_mode", "mean") == "mean"
+        mean_mode = self.cfg.network_payoff_mode == "mean"
 
         for a in agents:
             a.last_payoff = 0.0
@@ -232,17 +231,14 @@ class AgentsModel(Model):
         for u_slot, v_slot in self.social_network.edges():
             agent_u = self._slot_to_agent.get(u_slot)
             agent_v = self._slot_to_agent.get(v_slot)
-            if agent_u is None or agent_v is None:
-                continue
+            if agent_u is None or agent_v is None: continue
             action_u, action_v = agent_u.last_action, agent_v.last_action
             agent_u._payoff_sum += game.payoff(action_u, action_v)
             agent_v._payoff_sum += game.payoff(action_v, action_u)
             agent_u._network_neighbors_count += 1
             agent_v._network_neighbors_count += 1
-            if action_v == "C":
-                agent_u._network_coop_count += 1
-            if action_u == "C":
-                agent_v._network_coop_count += 1
+            if action_v == "C": agent_u._network_coop_count += 1
+            if action_u == "C": agent_v._network_coop_count += 1
 
         for a in agents:
             cnt = a._network_neighbors_count
@@ -296,22 +292,23 @@ class AgentsModel(Model):
             agent.age += 1
             agent.perceive_and_move()
 
-        pollution_enabled = getattr(self.cfg, "pollution_enabled", True)
-        prod_rate = getattr(self.cfg, "pollution_production_rate", 0.15)
-        cons_rate = getattr(self.cfg, "pollution_consumption_rate", 0.25)
+        pollution_enabled = self.cfg.pollution_enabled
+        prod_rate = self.cfg.pollution_production_rate
+        cons_rate = self.cfg.pollution_consumption_rate
         
-        # Сетка для накопления отходов за текущий шаг
         pollution_grid = np.zeros((self.cfg.height, self.cfg.width))
-
         self._harvest_cells(active_agents, pollution_grid, prod_rate)
 
-        if getattr(self.cfg, "network_type", "none") != "none" and self.social_network is not None:
+        if self.cfg.network_type != "none" and self.social_network is not None:
             self._interact_network(active_agents)
         else:
             self._interact_cells_aggregated(active_agents)
 
-        if getattr(self.cfg, "group_selection_enabled", False):
-            alpha = getattr(self.cfg, "group_selection_intensity", 0.0)
+        # === КРИТИЧЕСКИЙ ФИКС: СОЦИАЛЬНОЕ ОБУЧЕНИЕ (Пункт 1.3) ===
+        self._imitation_step(active_agents)
+
+        if self.cfg.group_selection_enabled:
+            alpha = self.cfg.group_selection_intensity
             if alpha > 0:
                 group_payoffs, group_counts = {}, {}
                 for a in active_agents:
@@ -323,7 +320,7 @@ class AgentsModel(Model):
                     avg_g = group_avg.get(a.group_id, a.last_payoff)
                     a.sugar += alpha * (avg_g - a.last_payoff)
 
-        if getattr(self.cfg, "trade_enabled", False):
+        if self.cfg.trade_enabled:
             self._trade_step(active_agents)
 
         for agent in active_agents: 
@@ -335,8 +332,8 @@ class AgentsModel(Model):
         if pollution_enabled:
             self.env.add_pollution(pollution_grid)
 
-        if getattr(self.cfg, "group_selection_enabled", False):
-            comp_step = getattr(self.cfg, "group_competition_step", 50)
+        if self.cfg.group_selection_enabled:
+            comp_step = self.cfg.group_competition_step
             if comp_step > 0 and self.steps_run > 0 and self.steps_run % comp_step == 0:
                 self._group_competition_step()
 
@@ -346,20 +343,17 @@ class AgentsModel(Model):
         self.steps_run += 1
 
     def _trade_step(self, agents):
-        use_network = (getattr(self.cfg, "network_type", "none") != "none"
-                       and self.social_network is not None)
+        use_network = (self.cfg.network_type != "none" and self.social_network is not None)
         traded_pairs = set()
         self.rng.shuffle(agents)
 
-        max_trades_per_agent = getattr(self.cfg, "max_trades_per_step", 2)
+        max_trades_per_agent = self.cfg.max_trades_per_step
 
         for agent in agents:
-            if not agent.alive:
-                continue
+            if not agent.alive: continue
             trades_done = 0
             for _ in range(max_trades_per_agent):
-                if trades_done >= max_trades_per_agent:
-                    break
+                if trades_done >= max_trades_per_agent: break
                 if use_network:
                     neighbor_slots = list(self.social_network.neighbors(agent.network_slot))
                     neighbors = [self._slot_to_agent[s] for s in neighbor_slots
@@ -371,12 +365,10 @@ class AgentsModel(Model):
                         cell_agents = self.grid.get_cell_list_contents([cell])
                         neighbors.extend([a for a in cell_agents
                                           if isinstance(a, EcoAgent) and a.alive and a != agent])
-                if not neighbors:
-                    break
+                if not neighbors: break
                 other = self.rng.choice(neighbors)
                 pair_id = tuple(sorted((agent.unique_id, other.unique_id)))
-                if pair_id in traded_pairs:
-                    continue
+                if pair_id in traded_pairs: continue
                 agent.trade(other)
                 traded_pairs.add(pair_id)
                 trades_done += 1
@@ -386,17 +378,27 @@ class AgentsModel(Model):
         for a in self.agents:
             if a.alive: groups.setdefault(a.group_id, []).append(a)
         if len(groups) < 2: return
-        group_fitness = {gid: sum(m.sugar + m.spice for m in members) / len(members) for gid, members in groups.items()}
+        
+        group_fitness = {gid: sum(m.sugar + m.spice for m in members) / len(members) 
+                         for gid, members in groups.items()}
+        
         best_gid = max(group_fitness, key=group_fitness.get)
-        worst_gid = min(group_fitness, key=group_fitness.get)
-        if best_gid == worst_gid: return
-        for agent in groups[worst_gid]:
-            agent.group_id = best_gid
-            if self.rng.random() < 0.5 and groups[best_gid]:
-                agent.genome.strategy = self.rng.choice(groups[best_gid]).genome.strategy
+        max_fitness = group_fitness[best_gid]
+        
+        for gid, members in groups.items():
+            if gid == best_gid: continue
+            fitness_gap = max_fitness - group_fitness[gid]
+            # Максимальный шанс миграции ограничен 80% для сохранения стохастичности
+            migration_prob = min(0.8, fitness_gap / (max_fitness + 1e-6))
+            
+            for agent in members:
+                if self.rng.random() < migration_prob:
+                    agent.group_id = best_gid
+                    if self.rng.random() < 0.5 and groups[best_gid]:
+                        agent.genome.strategy = self.rng.choice(groups[best_gid]).genome.strategy
 
     def _imitation_step(self, agents):
-        use_network = (getattr(self.cfg, "network_type", "none") != "none" and self.social_network is not None)
+        use_network = (self.cfg.network_type != "none" and self.social_network is not None)
         cache_ok = (use_network and getattr(self, "_network_neighbors_cache_step", -1) == self.steps_run)
         for agent in agents:
             if use_network:
@@ -419,7 +421,7 @@ class AgentsModel(Model):
         env_sugar = self.env.sugar
         env_spice = self.env.spice
 
-        harvest_multiplier = getattr(self.cfg, "harvest_multiplier", 3.0)
+        harvest_multiplier = self.cfg.harvest_multiplier
 
         for (x, y), cell_agents in by_cell.items():
             demands_sugar = [a.genome.metabolism_sugar * harvest_multiplier
@@ -464,7 +466,7 @@ class AgentsModel(Model):
         for agent in agents:
             by_cell.setdefault(agent.pos, []).append(agent)
         game = self.cfg.game
-        memory_size = getattr(self.cfg, "memory_size", 10)
+        memory_size = self.cfg.memory_size
 
         for cell_agents in by_cell.values():
             n = len(cell_agents)
@@ -517,7 +519,7 @@ class AgentsModel(Model):
 
     def _evolution_step(self):
         newborns = []
-        capacity = getattr(self.cfg, "population_capacity", 10**9)
+        capacity = self.cfg.population_capacity
         planned_population = sum(1 for a in self.agents if a.alive)
 
         for agent in list(self.agents):
@@ -532,10 +534,10 @@ class AgentsModel(Model):
             child.network_slot = self.max_slots
             self.max_slots += 1
             child.group_id = parent.group_id
-            if getattr(self.cfg, "group_selection_enabled", False):
-                mig_rate = getattr(self.cfg, "group_migration_rate", 0.0)
+            if cfg.group_selection_enabled:
+                mig_rate = cfg.group_migration_rate
                 if self.rng.random() < mig_rate:
-                    child.group_id = int(self.rng.integers(0, getattr(self.cfg, "num_groups", 10)))
+                    child.group_id = int(self.rng.integers(0, cfg.num_groups))
 
             self.grid.place_agent(child, spawn_pos)
 
@@ -544,8 +546,8 @@ class AgentsModel(Model):
                 parent_slot = parent.network_slot
                 if parent_slot in self.social_network:
                     candidates = [s for s in self.social_network.neighbors(parent_slot) if s != child.network_slot]
-                    max_deg = getattr(cfg, "max_network_degree", 0)
-                    target_edges = getattr(cfg, "target_offspring_edges", max(1, cfg.network_param_m))
+                    max_deg = cfg.max_network_degree
+                    target_edges = cfg.target_offspring_edges
                     k = int(target_edges)
                     if max_deg > 0:
                         candidates = [s for s in candidates if self.social_network.degree(s) < max_deg]
