@@ -94,6 +94,15 @@ class Config:
     pollution_decay_rate: float = 0.05
     pollution_capacity_impact: float = 1.5
 
+    # === ОСТРОВНАЯ МОДЕЛЬ (Пункт 2.3) ===
+    island_model_enabled: bool = False
+    islands_count: int = 4
+    island_migration_rate: float = 0.01
+
+    # === ДИНАМИКА ПИКОВ РЕСУРСОВ (Пункт 2.5) ===
+    resource_peaks_drift_speed: float = 1.0
+    resource_peaks_mutation_prob: float = 0.05
+
     # =========================================================
     # Свойства
     # =========================================================

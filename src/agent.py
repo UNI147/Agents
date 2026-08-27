@@ -91,6 +91,8 @@ class EcoAgent(Agent):
             
         self.propensities = {"C": base_c, "D": base_d}
 
+        self.home_island = 0 # Устанавливается моделью при спавне
+
     @property
     def accumulated_payoff(self):
         """Накопленный социальный выигрыш за последние K шагов (memory_size)."""
@@ -392,3 +394,20 @@ class EcoAgent(Agent):
         if self.model.rng.random() < prob:
             return self._copy_trained_behavior(observed)
         return None
+
+    def migrate(self):
+        """Миграция между островами (Island Model)."""
+        if not self.model.cfg.island_model_enabled:
+            return
+            
+        # Вероятность миграции на другой остров
+        if self.model.rng.random() < self.model.cfg.island_migration_rate:
+            target_island = int(self.model.rng.integers(0, self.model.cfg.islands_count))
+            
+            # Мигрируем только если остров другой и на нем есть суша
+            if target_island != self.home_island and len(self.model.env.island_cells[target_island]) > 0:
+                idx = self.model.rng.integers(0, len(self.model.env.island_cells[target_island]))
+                x, y = self.model.env.island_cells[target_island][idx]
+                
+                self.model.grid.move_agent(self, (x, y))
+                self.home_island = target_island

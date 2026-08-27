@@ -79,3 +79,12 @@ pollution_consumption_rate: 0.25  # Отходы от метаболизма
 pollution_diffusion_rate: 0.20    # Диффузия к соседям
 pollution_decay_rate: 0.05        # Естественное разложение
 pollution_capacity_impact: 1.5    # Насколько 1 ед. отходов снижает capacity
+
+# === ОСТРОВНАЯ МОДЕЛЬ (Пункт 2.3) ===
+island_model_enabled: true
+islands_count: 4
+island_migration_rate: 0.01 # Вероятность миграции агента на другой остров за один шаг
+
+# === ДИНАМИКА ПИКОВ РЕСУРСОВ (Пункт 2.5) ===
+resource_peaks_drift_speed: 1.0 # Скорость дрейфа пиков (макс. смещение в ячейках за шаг)
+resource_peaks_mutation_prob: 0.05 # Вероятность появления/исчезновения пика за шаг

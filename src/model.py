@@ -173,6 +173,11 @@ class AgentsModel(Model):
             catastrophe_severity=self.cfg.catastrophe_severity, rng=self.rng,
             pollution_enabled=self.cfg.pollution_enabled, pollution_diffusion_rate=self.cfg.pollution_diffusion_rate,
             pollution_decay_rate=self.cfg.pollution_decay_rate, pollution_capacity_impact=self.cfg.pollution_capacity_impact,
+            # Новые параметры
+            resource_peaks_drift_speed=self.cfg.resource_peaks_drift_speed,
+            resource_peaks_mutation_prob=self.cfg.resource_peaks_mutation_prob,
+            island_model_enabled=self.cfg.island_model_enabled,
+            islands_count=self.cfg.islands_count
         )
 
         # Инициализация Менеджеров
@@ -207,6 +212,8 @@ class AgentsModel(Model):
             agent.network_slot = self.max_slots
             self.max_slots += 1
             self.grid.place_agent(agent, (x, y))
+            if self.cfg.island_model_enabled:
+                agent.home_island = self.env.island_map[y, x]
 
         self.network_manager.build_network(self.max_slots)
 
@@ -259,6 +266,7 @@ class AgentsModel(Model):
         for agent in active_agents:
             agent.age += 1
             agent.perceive_and_move()
+            agent.migrate() # <-- Вызов логики миграции между островами (П. 2.3)
 
         pollution_enabled = self.cfg.pollution_enabled
         cons_rate = self.cfg.pollution_consumption_rate
