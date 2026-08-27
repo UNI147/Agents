@@ -31,12 +31,13 @@ def plot_results(df: pd.DataFrame, save_path=None):
         if active: ax1.axvspan(df['Step'].iloc[i], df['Step'].iloc[i] + 1, color='red', alpha=0.12)
     ax1.legend(loc='upper left', fontsize=8)
 
+    # === 2. Эмерджентные стратегии (Пропенсивити) ===
     ax2 = fig.add_subplot(gs[0, 1])
-    for s, color in [("AlwaysC", "green"), ("TFT", "limegreen"), ("GTFT", "teal"), ("WSLS", "orange"), ("AlwaysD", "red")]:
-        col = f"Freq_{s}"
-        if col in df.columns: ax2.plot(df['Step'], df[col], label=s, color=color, linewidth=1.2)
-    ax2.set_title('Частоты игровых стратегий', fontsize=12, fontweight='bold')
-    ax2.set_xlabel('Шаг'); ax2.set_ylim(-0.02, 1.02); ax2.legend(fontsize=8, ncol=2)
+    if 'Avg_Propensity_C' in df.columns:
+        ax2.plot(df['Step'], df['Avg_Propensity_C'], label='Склонность к Кооперации', color='green', linewidth=1.5)
+        ax2.plot(df['Step'], df['Avg_Propensity_D'], label='Склонность к Дефекции', color='red', linewidth=1.5)
+    ax2.set_title('🧠 Эмерджентные стратегии (Обучение)', fontsize=12, fontweight='bold')
+    ax2.legend(fontsize=8)
 
     ax3 = fig.add_subplot(gs[1, 0])
     for t in IMITATION_TYPES:

@@ -80,6 +80,10 @@ class InteractionManager:
                 a.spice += payoff * frac_spice
                 a.last_action = action
                 a.last_payoff = payoff
+
+                # --- Агент учится на полученном уроке ---
+                a.update_learning(action, payoff)
+                
                 other_c = n_c - (1 if action == "C" else 0)
                 a.last_cell_coop_rate = other_c / (n - 1) if n > 1 else 1.0
                 for other in cell_agents:

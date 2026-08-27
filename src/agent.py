@@ -11,11 +11,15 @@ class Genome:
     vision: int
     metabolism_sugar: float
     metabolism_spice: float
-    strategy: str
     max_age: int
     imitation_type: str = "none"
     imitation_intensity: float = 1.0
     imitation_rate: float = 0.1
+    
+    # === ГЕНЫ ОБУЧЕНИЯ (Roth-Erev) ===
+    learning_rate: float = 1.0       # Масштаб подкрепления
+    propensity_decay: float = 0.95   # Параметр забывания (recency)
+    exploration_rate: float = 0.05   # Параметр эксперимента (эксплорация)
 
     def mutate(self, rate, min_vision, max_vision, min_met_s, max_met_s,
                min_met_sp, max_met_sp, min_intensity, max_intensity, rng):
@@ -64,6 +68,13 @@ class EcoAgent(Agent):
         self.strategy_changes = 0
 
     @property
+    def accumulated_payoff(self):
+        """Накопленный социальный выигрыш за последние K шагов (memory_size)."""
+        if not self.interaction_history:
+            return 0.0
+        return sum(h["payoff"] for h in self.interaction_history)
+
+    @property
     def alive(self):
         return (self.sugar > -1.0 and self.spice > -1.0
                 and self.age < self.genome.max_age)
@@ -90,47 +101,40 @@ class EcoAgent(Agent):
         return (m1 * w2) / (m2 * w1)
 
     def get_action(self, current_partners=None):
-        strat = self.genome.strategy
-        if strat in ("C", "AlwaysC"):
-            return "C"
-        elif strat in ("D", "AlwaysD"):
-            return "D"
-        elif strat == "TFT":
-            if current_partners and len(current_partners) > 1:
-                remembered_actions = []
-                for other in current_partners:
-                    if other.unique_id != self.unique_id and other.unique_id in self.partners:
-                        remembered_actions.append(self.partners[other.unique_id]["last_action"])
-                if remembered_actions:
-                    coop_rate = remembered_actions.count("C") / len(remembered_actions)
-                    return "C" if coop_rate >= 0.5 else "D"
-            return "C" if self.last_cell_coop_rate >= 0.5 else "D"
-        elif strat == "GTFT":
-            coop_rate = self.last_cell_coop_rate
-            if current_partners and len(current_partners) > 1:
-                remembered_actions = []
-                for other in current_partners:
-                    if other.unique_id != self.unique_id and other.unique_id in self.partners:
-                        remembered_actions.append(self.partners[other.unique_id]["last_action"])
-                if remembered_actions:
-                    coop_rate = remembered_actions.count("C") / len(remembered_actions)
-            if coop_rate >= 0.5:
-                return "C"
+        """Выбор действия на основе накопленных склонностей + шум."""
+        if self.model.rng.random() < self.genome.exploration_rate:
+            return self.model.rng.choice(["C", "D"])
+            
+        total = self.propensities["C"] + self.propensities["D"]
+        if total <= 0: return self.model.rng.choice(["C", "D"])
+            
+        p_c = self.propensities["C"] / total
+        return "C" if self.model.rng.random() < p_c else "D"
+
+    def update_learning(self, action_played, payoff):
+        """Обновление по правилу Рота-Эрева"""
+        e = self.genome.exploration_rate
+        decay = self.genome.propensity_decay
+        lr = self.genome.learning_rate
+        
+        if payoff > 0:
+            # Сыгранное действие получает (1-e)*payoff, альтернативное e*payoff
+            main_update = payoff * (1.0 - e) * lr
+            alt_update = payoff * e * lr
+            
+            if action_played == "C":
+                self.propensities["C"] += main_update
+                self.propensities["D"] += alt_update
             else:
-                return "C" if self.model.rng.random() < 0.33 else "D"
-        elif strat == "WSLS":
-            P = self.model.cfg.game.P
-            if self.interaction_history:
-                last_mem = self.interaction_history[-1]
-                if last_mem["payoff"] > P + 1e-6:
-                    return last_mem["action"]
-                else:
-                    return "D" if last_mem["action"] == "C" else "C"
-            if self.last_payoff > P + 1e-6:
-                return self.last_action
-            else:
-                return "D" if self.last_action == "C" else "C"
-        return "C"
+                self.propensities["D"] += main_update
+                self.propensities["C"] += alt_update
+                
+        # Эффект забывания (decay)
+        self.propensities["C"] *= decay
+        self.propensities["D"] *= decay
+        
+        self.propensities["C"] = max(0.01, self.propensities["C"])
+        self.propensities["D"] = max(0.01, self.propensities["D"])
 
     def perceive_and_move(self):
         vision = self.genome.vision
@@ -154,15 +158,24 @@ class EcoAgent(Agent):
         met_s = self.genome.metabolism_sugar
         met_sp = self.genome.metabolism_spice
 
-        if self.sugar < 3.0:
-            met_s *= 0.6
-        if self.spice < 3.0:
-            met_sp *= 0.6
+        if self.sugar < 3.0: met_s *= 0.6
+        if self.spice < 3.0: met_sp *= 0.6
 
-        self.sugar -= met_s
-        self.spice -= met_sp
+        # === БИОЛОГИЧЕСКИЕ ЗАТРАТЫ НА ПОДДЕРЖАНИЕ ОРГАНОВ И МОЗГА ===
+        # 1. Зрение требует энергии (больше радиус = выше стоимость)
+        vision_cost = 0.1 * self.genome.vision
         
-        return met_s, met_sp
+        # 2. Нервная ткань (память о социальных партнерах) требует энергии
+        memory_cost = 0.1 * len(self.partners)
+
+        # Итоговые затраты распределяются между sugar и spice
+        total_met_s = met_s + vision_cost + memory_cost
+        total_met_sp = met_sp + (vision_cost + memory_cost) * 0.5
+
+        self.sugar -= total_met_s
+        self.spice -= total_met_sp
+        
+        return total_met_s, total_met_sp
 
     def can_reproduce(self):
         threshold = self.model.cfg.reproduction_threshold
@@ -278,9 +291,9 @@ class EcoAgent(Agent):
             self.strategy_changes += 1
 
     def _imitate_best_neighbor(self, others):
-        best = max(others, key=lambda a: a.last_payoff)
-        if best.last_payoff > self.last_payoff:
-            return best.genome.strategy
+        best = max(others, key=lambda a: a.accumulated_payoff)
+        if best.accumulated_payoff > self.accumulated_payoff:
+            return best.propensities # Возвращаем не строку стратегии, а накопленный опыт
         return None
 
     def _imitate_pairwise_difference(self, others):
