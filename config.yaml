@@ -3,24 +3,29 @@ width: 50
 height: 50
 
 # Ресурсы
-max_resource: 4.0
-regen_rate: 1.0
+max_resource: 6.0
+regen_rate: 2.0
+max_spice: 6.0
+regen_rate_spice: 2.0
 
 # Динамика среды
 season_period: 100
-season_amplitude: 0.5
+season_amplitude: 0.3
 catastrophe_prob: 0.005
-catastrophe_duration: 15
-catastrophe_severity: 0.3
-
-# Агенты
-initial_agents: 200
 min_vision: 1
 max_vision: 6
-min_metabolism: 1.0
-max_metabolism: 4.0
-initial_resource: 15.0
-max_age: 200
+min_metabolism: 0.5
+max_metabolism: 3.0
+
+# === ПАРАМЕТРЫ МЕТАБОЛИЗМА (SPICE) - Пункт 2.1 ===
+min_metabolism_spice: 1.0
+max_metabolism_spice: 4.0
+initial_resource: 18.4
+initial_spice: 18.4
+
+initial_agents: 80
+
+max_age: 300
 
 # Память (Пункт 1.2)
 memory_size: 10
@@ -31,7 +36,7 @@ max_imitation_intensity: 10.0   # Максимальный параметр m
 initial_imitation_rate: 0.2     # Начальная вероятность попытки имитации
 
 # Эволюция
-reproduction_threshold: 40.0
+reproduction_threshold: 35.0
 mutation_rate: 0.1
 
 # Игра (Payoffs)
@@ -55,7 +60,7 @@ network_payoff_mode: "mean"       # mean | sum
 offspring_network_edges: 0        # 0 = автоматически по типу сети
 max_network_degree: 0             # 0 = без ограничения; можно задать вручную
 use_food_carrying_capacity: true  # экологическая ёмкость по ресурсу
-max_population: 0                 # 0 = автоматически
+max_population: 3000                 # 0 = автоматически
 max_runtime_seconds: 0            # 0 = без ограничения по времени
 
 # Многоуровневый отбор (Пункт 1.6)
@@ -63,4 +68,7 @@ group_selection_enabled: true
 num_groups: 10
 group_selection_intensity: 0.3  # Вес группового фитнеса (alpha)
 group_migration_rate: 0.02      # Вероятность смены группы при рождении
-group_competition_step: 50      # Каждые N шагов происходит конкуренция групп
+group_competition_step: 50      # Каждые N шагов происходит конкуренция групп     
+
+# === ТОРГОВЛЯ (TRADE) - Пункт 2.1 ===
+trade_enabled: true
