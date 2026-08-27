@@ -17,8 +17,10 @@ def compute_stats(model):
     n = len(model.agents)
     if n == 0: return _empty_stats()
 
-    sum_sugar = sum_spice = sum_vis = n_c = n_action_c = 0
-    sum_met_s = sum_met_sp = 0
+    sum_sugar = sum_spice = sum_vis = 0.0
+    sum_met_s = sum_met_sp = 0.0
+    sum_propensity_c = 0.0  # Накопитель реальной склонности к кооперации
+    
     strat_counts = {s: 0 for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]}
     imit_type_counts = {t: 0 for t in IMITATION_TYPES}
     imit_type_payoff = {t: 0.0 for t in IMITATION_TYPES}
@@ -37,20 +39,30 @@ def compute_stats(model):
         sum_intensity += a.genome.imitation_intensity
         sum_imitation_rate += a.genome.imitation_rate
 
-        strat = a.genome.strategy
+        # Защита от TypeError (если стратегия вдруг стала не строкой)
+        strat = a.genome.strategy if isinstance(a.genome.strategy, str) else "Unknown"
         if strat in strat_counts: strat_counts[strat] += 1
-        if strat in ("AlwaysC", "TFT", "GTFT"): n_c += 1
-        if getattr(a, "last_action", "C") == "C": n_action_c += 1
+            
+        # === СТАТИСТИКА ОБУЧЕННОГО ПОВЕДЕНИЯ (Roth-Erev) ===
+        total_prop = a.propensities["C"] + a.propensities["D"]
+        p_c = a.propensities["C"] / total_prop if total_prop > 0 else 0.5
+        sum_propensity_c += p_c
 
         itype = a.genome.imitation_type
         imit_type_counts[itype] += 1
-        imit_type_payoff[itype] += a.last_payoff
+        # Считаем средний накопленный выигрыш (K шагов), а не last_payoff
+        imit_type_payoff[itype] += a.accumulated_payoff 
         imit_type_resource[itype] += (a.sugar + a.spice)
         imit_type_attempts[itype] += getattr(a, "imitation_attempts", 0)
         imit_type_successes[itype] += getattr(a, "imitation_successes", 0)
 
+    # Реальная частота кооператоров теперь основана на выученном поведении
+    n_action_c = sum(1 for a in model.agents if getattr(a, "last_action", "C") == "C")
+    
     stats = {
-        "Population": n, "Freq_Cooperators": n_c / n, "Freq_Action_C": n_action_c / n,
+        "Population": n, 
+        "Freq_Cooperators": sum_propensity_c / n, # Реальная частота кооперации
+        "Freq_Action_C": n_action_c / n,
         "Avg_Sugar": sum_sugar / n, "Avg_Spice": sum_spice / n, "Avg_Vision": sum_vis / n,
         "Avg_Metabolism_Sugar": sum_met_s / n, "Avg_Metabolism_Spice": sum_met_sp / n,
         "Avg_Imitation_Intensity": sum_intensity / n, "Avg_Imitation_Rate": sum_imitation_rate / n,
@@ -80,13 +92,22 @@ def compute_stats(model):
 
 def _empty_stats():
     stats = {
-        "Population": 0, "Freq_Cooperators": 0.0, "Freq_Action_C": 0.0,
-        "Avg_Sugar": 0.0, "Avg_Spice": 0.0, "Avg_Vision": 0.0, 
-        "Avg_Metabolism_Sugar": 0.0, "Avg_Metabolism_Spice": 0.0,
-        "Avg_Imitation_Intensity": 0.0, "Avg_Imitation_Rate": 0.0,
-        "Alive_Groups": 1, "Group_Fitness_Variance": 0.0, "Total_Pollution": 0.0,
+        "Population": 0,
+        "Freq_Cooperators": 0.0,
+        "Freq_Action_C": 0.0,
+        "Avg_Sugar": 0.0,
+        "Avg_Spice": 0.0,
+        "Avg_Vision": 0.0,
+        "Avg_Metabolism_Sugar": 0.0,
+        "Avg_Metabolism_Spice": 0.0,
+        "Avg_Imitation_Intensity": 0.0,
+        "Avg_Imitation_Rate": 0.0,
+        "Alive_Groups": 1,
+        "Group_Fitness_Variance": 0.0,
+        "Total_Pollution": 0.0,
     }
-    for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]: stats[f"Freq_{s}"] = 0.0
+    for s in ["AlwaysC", "AlwaysD", "TFT", "WSLS", "GTFT"]:
+        stats[f"Freq_{s}"] = 0.0
     for t in IMITATION_TYPES:
         stats[f"ImitFreq_{t}"] = 0.0
         stats[f"ImitAvgPayoff_{t}"] = 0.0

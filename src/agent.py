@@ -12,6 +12,7 @@ class Genome:
     metabolism_sugar: float
     metabolism_spice: float
     max_age: int
+    strategy: str = "TFT"
     imitation_type: str = "none"
     imitation_intensity: float = 1.0
     imitation_rate: float = 0.1
@@ -66,6 +67,7 @@ class EcoAgent(Agent):
         self.imitation_attempts = 0
         self.imitation_successes = 0
         self.strategy_changes = 0
+        self.propensities = {"C": 1.0, "D": 1.0}
 
     @property
     def accumulated_payoff(self):
@@ -267,66 +269,74 @@ class EcoAgent(Agent):
 
     def try_imitate(self, neighbors: list):
         itype = self.genome.imitation_type
-        if itype == "none":
-            return
-        if self.model.rng.random() >= self.genome.imitation_rate:
-            return
+        if itype == "none": return
+        if self.model.rng.random() >= self.genome.imitation_rate: return
+        
         self.imitation_attempts += 1
-        other_agents = [a for a in neighbors
-                        if isinstance(a, EcoAgent) and a.unique_id != self.unique_id]
-        if not other_agents:
-            return
+        other_agents = [a for a in neighbors if isinstance(a, EcoAgent) and a.unique_id != self.unique_id]
+        if not other_agents: return
+        
         new_strategy = None
-        if itype == "best_neighbor":
-            new_strategy = self._imitate_best_neighbor(other_agents)
-        elif itype == "pairwise_diff":
-            new_strategy = self._imitate_pairwise_difference(other_agents)
-        elif itype == "proportional_m":
-            new_strategy = self._imitate_proportional_moran(other_agents)
-        elif itype == "fermi_m":
-            new_strategy = self._imitate_fermi_logit(other_agents)
-        if new_strategy is not None and new_strategy != self.genome.strategy:
-            self.genome.strategy = new_strategy
+        if itype == "best_neighbor": new_strategy = self._imitate_best_neighbor(other_agents)
+        elif itype == "pairwise_diff": new_strategy = self._imitate_pairwise_difference(other_agents)
+        elif itype == "proportional_m": new_strategy = self._imitate_proportional_moran(other_agents)
+        elif itype == "fermi_m": new_strategy = self._imitate_fermi_logit(other_agents)
+            
+        if new_strategy is not None:
             self.imitation_successes += 1
-            self.strategy_changes += 1
+            if new_strategy == "COPIED_PROPENSITIES":
+                self.strategy_changes += 1
+            elif new_strategy != self.genome.strategy:
+                self.genome.strategy = new_strategy
+                self.strategy_changes += 1
+
+    def _copy_trained_behavior(self, observed):
+        """Копирование обученного поведения (склонностей Roth-Erev)."""
+        # Агент перенимает накопленный опыт соседа
+        self.propensities["C"] = observed.propensities["C"]
+        self.propensities["D"] = observed.propensities["D"]
+        return "COPIED_PROPENSITIES"
 
     def _imitate_best_neighbor(self, others):
         best = max(others, key=lambda a: a.accumulated_payoff)
         if best.accumulated_payoff > self.accumulated_payoff:
-            return best.propensities # Возвращаем не строку стратегии, а накопленный опыт
+            return self._copy_trained_behavior(best)
         return None
 
     def _imitate_pairwise_difference(self, others):
         observed = self.model.rng.choice(others)
-        max_diff = self.model.cfg.max_payoff_difference
+        # Масштабируем max_diff на K шагов (memory_size), т.к. используем accumulated_payoff
+        max_diff = self.model.cfg.max_payoff_difference * self.model.cfg.memory_size
         if max_diff <= 0:
             return None
-        payoff_diff = observed.last_payoff - self.last_payoff
+        payoff_diff = observed.accumulated_payoff - self.accumulated_payoff
         if payoff_diff <= 0:
             return None
         prob = min(1.0, max(0.0, payoff_diff / max_diff))
         if self.model.rng.random() < prob:
-            return observed.genome.strategy
+            return self._copy_trained_behavior(observed)
         return None
 
     def _imitate_proportional_moran(self, others):
         m = self.genome.imitation_intensity
-        payoffs = np.array([max(0.0, a.last_payoff) for a in others], dtype=float)
+        # Используем accumulated_payoff для пропорциональной имитации
+        payoffs = np.array([max(0.0, a.accumulated_payoff) for a in others], dtype=float)
         weights = np.power(payoffs, m)
         total = weights.sum()
         if total <= 0:
             return None
         probs = weights / total
         idx = self.model.rng.choice(len(others), p=probs)
-        return others[idx].genome.strategy
+        return self._copy_trained_behavior(others[idx])
 
     def _imitate_fermi_logit(self, others):
         m = self.genome.imitation_intensity
         observed = self.model.rng.choice(others)
-        payoff_diff = observed.last_payoff - self.last_payoff
+        # Правило Ферми теперь работает на основе накопленного социального выигрыша
+        payoff_diff = observed.accumulated_payoff - self.accumulated_payoff
         exponent = -m * payoff_diff
         exponent = np.clip(exponent, -500, 500)
         prob = 1.0 / (1.0 + math.exp(exponent))
         if self.model.rng.random() < prob:
-            return observed.genome.strategy
+            return self._copy_trained_behavior(observed)
         return None
